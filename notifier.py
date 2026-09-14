@@ -10,6 +10,12 @@ from card_generator import generate_entity_card
 
 logger = logging.getLogger("notifier")
 
+STYLE_LABELS = {
+    "contradiction": "Contradiction (Révélation vs Défense)",
+    "deroule_brut": "Déroulé brut chronologique",
+    "insider": "Insider direct"
+}
+
 def send_telegram_notification(item: Dict[str, Any], analysis: Dict[str, Any]) -> bool:
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         logger.warning("TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID manquant.")
@@ -23,8 +29,9 @@ def send_telegram_notification(item: Dict[str, Any], analysis: Dict[str, Any]) -
     impact = analysis.get("systemic_impact", 0)
     novelty = analysis.get("novelty_scoop", 0)
     evidence = analysis.get("evidence_quality", 0)
-    entity = analysis.get("target_entity") or item.get("source", "")
     domain = analysis.get("target_domain")
+    style_key = analysis.get("chosen_style", "")
+    style_label = STYLE_LABELS.get(style_key, style_key.capitalize())
 
     safe_title = html.escape(item['title'])
     safe_source = html.escape(item['source'])
@@ -40,9 +47,10 @@ def send_telegram_notification(item: Dict[str, Any], analysis: Dict[str, Any]) -
     caption_text = (
         f"{score_badge} (Score : <b>{score}/10</b>) • <i>{safe_source}</i>\n"
         f"📰 <b>{safe_title}</b>\n\n"
-        f"✍️ <b>Tweet prêt à publier :</b> <i>(tap pour copier)</i>\n"
+        f"✍️ <b>Tweet proposé :</b> <i>(tap pour copier)</i>\n"
         f"<code>{safe_tweet}</code>\n\n"
         f"<blockquote expandable>📊 <b>Analyse de Xena :</b>\n"
+        f"• Format choisi : <b>{style_label}</b>\n"
         f"• Impact : <b>{impact}/10</b> | Inédit : <b>{novelty}/10</b> | Preuves : <b>{evidence}/10</b>\n\n"
         f"🔍 <b>Fait brut vérifié :</b>\n{safe_core}\n\n"
         f"⚖️ <b>Cadrage & Contradictoire :</b>\n"
@@ -71,7 +79,7 @@ def send_telegram_notification(item: Dict[str, Any], analysis: Dict[str, Any]) -
 
     silent_mode = bool(score < 8.8)
 
-    # 1. Générer la carte visuelle pure (LOGO SEUL au centre, SANS TEXTE)
+    # 1. Générer et envoyer avec la carte logo pure
     try:
         card_file = generate_entity_card(item["id"], domain, CARDS_DIR)
         photo_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
@@ -86,7 +94,7 @@ def send_telegram_notification(item: Dict[str, Any], analysis: Dict[str, Any]) -
             }, files={"photo": f}, timeout=10)
             
             if resp.json().get("ok"):
-                logger.info(f"Carte logo envoyée pour : {item['title']} (Entité: {entity})")
+                logger.info(f"Alerte envoyée pour : {item['title']} (Style: {style_label})")
                 return True
     except Exception as e:
         logger.warning(f"Erreur envoi carte logo ({e}), repli sur message texte.")
@@ -105,7 +113,7 @@ def send_telegram_notification(item: Dict[str, Any], analysis: Dict[str, Any]) -
         resp = requests.post(text_url, json=payload, timeout=10)
         return resp.json().get("ok", False)
     except Exception as e:
-        logger.error(f"Exception lors de l'envoi Telegram: {e}")
+        logger.error(f"Exception envoi Telegram: {e}")
         return False
 
 def process_telegram_feedback(storage, offset: int = 0) -> int:
@@ -131,7 +139,7 @@ def process_telegram_feedback(storage, offset: int = 0) -> int:
                 logger.info(f"Feedback enregistré : {art_id} -> {act_label}")
                 
                 ans_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery"
-                msg = "✅ Enregistré comme Tweeté sur X !" if action == "ok" else "❌ Enregistré comme Rejeté."
+                msg = "✅ Noté comme Tweeté sur X !" if action == "ok" else "❌ Noté comme Rejeté."
                 requests.post(ans_url, json={"callback_query_id": cb["id"], "text": msg}, timeout=3)
     except Exception as e:
         logger.debug(f"Erreur polling feedback: {e}")

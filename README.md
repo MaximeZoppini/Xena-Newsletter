@@ -134,3 +134,25 @@ Consultez le document complet : **[FAABLE_ROADMAP.md](FAABLE_ROADMAP.md)** pour 
 3. **Débat multi-agents Procureur / Défenseur / Juge** pour les articles $\ge 7.5$.
 4. **Distribution multi-plateforme** (Bluesky, Mastodon, X).
 5. **Site web archive & transparence** avec page dédiée pour chaque alerte expliquant la méthodologie.
+
+---
+
+## ✍️ 9. Les 3 Styles de Rédaction Humains (Sans Puces ni Accroches Cringe)
+
+L'IA sélectionne dynamiquement l'angle d'écriture le plus adapté à l'actualité pour écrire comme un humain (analyste ou journaliste sur son compte perso) et jamais comme un bot RSS :
+
+1. **Format "Contradiction"** (Quand une révélation s'oppose à la version officielle) :
+   > *Des documents internes révèlent le trucage de deux appels à projets de l'Ademe pour verser 45 millions d'euros de subventions à un site chimique. Bercy réfute toute irrégularité et assure que la procédure standard a été suivie.*
+   > *https://disclose.ngo/...*
+
+2. **Format "Insider direct"** (Idéal pour la tech, la cyber et les coulisses d'entreprises) :
+   > *Chez OpenAI, des prestataires au Kenya et aux Philippines ont eu accès à des conversations brutes contenant du code propriétaire, des dossiers médicaux et des mots de passe. OpenAI affirme que ces révisions manuelles respectent ses conditions d'utilisation.*
+   > *https://404media.co/...*
+
+3. **Format "Déroulé brut"** (Pour les affaires d'État, judiciaires et scandales chronologiques) :
+   > *Le ministère de la Culture a reçu des alertes dès 2014 sur un haut fonctionnaire qui droguait des candidates en entretien. Rien n'a bougé pendant dix ans avant l'ouverture d'une enquête administrative en 2024. Il est aujourd'hui mis en examen pour empoisonnement sur près de 300 femmes.*
+   > *https://mediapart.fr/...*
+
+**Règles d'écriture absolues :**
+- Zéro puce (`•`), zéro titre en gras (`**Dossier X**`), zéro emoji excessif.
+- Zéro mention devant le lien (`Lien :`, `Source :`) : le lien brut est posé tout à la fin, Twitter chargeant automatiquement la preview officielle.
