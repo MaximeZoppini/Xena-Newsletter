@@ -1,11 +1,11 @@
 import time
 import argparse
 import logging
-from config import DATABASE_PATH, POLL_INTERVAL_MINUTES, MIN_INTEREST_SCORE, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+from config import DATABASE_PATH, POLL_INTERVAL_MINUTES
 from storage import Storage
 from sources import get_all_new_candidates
 from analyzer import NewsAnalyzer
-from notifier import notify, send_telegram_notification, send_discord_notification
+from notifier import notify
 
 logging.basicConfig(
     level=logging.INFO,
@@ -13,20 +13,30 @@ logging.basicConfig(
 )
 logger = logging.getLogger("main")
 
-def run_pipeline_once(storage: Storage, analyzer: NewsAnalyzer, dry_run: bool = False):
-    logger.info("Démarrage du cycle de veille...")
-    candidates = get_all_new_candidates(storage)
+MAX_DAILY_POSTS = 4
+
+def run_pipeline_cycle(storage: Storage, analyzer: NewsAnalyzer, dry_run: bool = False):
+    logger.info("=== Lancement du cycle de curation éditoriale ===")
     
-    if not candidates:
-        logger.info("Aucune nouvelle information détectée lors de ce cycle.")
+    # 1. Vérification du quota journalier (Anti-Spam)
+    daily_count = storage.count_published_last_24h()
+    logger.info(f"Publications effectuées sur les dernières 24h : {daily_count}/{MAX_DAILY_POSTS}")
+    if daily_count >= MAX_DAILY_POSTS and not dry_run:
+        logger.info("Plafond quotidien de 4 posts atteint. Veille en pause pour préserver la qualité du compte.")
         return
 
-    logger.info(f"{len(candidates)} nouvelles informations à analyser.")
+    # 2. Récupération des candidats non encore analysés
+    candidates = get_all_new_candidates(storage)
+    if not candidates:
+        logger.info("Aucune nouvelle information brute détectée.")
+        return
+
+    logger.info(f"{len(candidates)} dépêches candidates à évaluer.")
+
+    # 3. Évaluation multi-critères
+    qualified_items = []
     
-    processed = 0
     for item in candidates:
-        logger.info(f"Analyse de : {item['title']} ({item['source']})")
-        
         if not dry_run:
             storage.save_article(item)
             
@@ -34,37 +44,48 @@ def run_pipeline_once(storage: Storage, analyzer: NewsAnalyzer, dry_run: bool = 
         if not analysis:
             continue
             
-        score = analysis.get("interest_score", 0)
-        logger.info(f"-> Score: {score}/10 | Biais: {analysis.get('framing_bias')}")
+        score = analysis.get("global_score", 0.0)
+        novelty = analysis.get("novelty_scoop", 0)
         
         if not dry_run:
             storage.save_analysis(item["id"], analysis)
             
-        if score >= MIN_INTEREST_SCORE:
-            logger.info(f"✨ Retenu pour publication (Score {score} >= {MIN_INTEREST_SCORE})")
-            if not dry_run:
-                notify(item, analysis)
-                time.sleep(2)
-            else:
-                print("\n" + "="*50)
-                print(f"[DRY-RUN TWEET RETENU] ({item['source']})")
-                print(f"Fait brut : {analysis.get('factual_core')}")
-                print(f"Biais     : {analysis.get('framing_bias')}")
-                print(f"Tweet     :\n{analysis.get('tweet_text')}")
-                print("="*50 + "\n")
-                
-            processed += 1
-            if dry_run and processed >= 3:
-                break
+        # Seuil d'éligibilité : Score global >= 8.0 ET Nouveauté >= 7
+        if score >= 8.0 and novelty >= 7:
+            logger.info(f"🎯 ÉLIGIBLE : '{item['title'][:60]}...' (Score {score}/10, Nouveauté {novelty}/10)")
+            qualified_items.append((score, item, analysis))
+        else:
+            reason = analysis.get("rejection_reason") or "Score insuffisant"
+            logger.info(f"❌ Rejeté ({score}/10) : '{item['title'][:50]}...' -> {reason}")
+            
+    if not qualified_items:
+        logger.info("Fin du cycle : aucune dépêche n'a franchi le seuil d'exigence (≥ 8.0/10).")
+        return
 
-    logger.info(f"Cycle terminé. {processed} alertes traitées.")
+    # 4. Sélection stricte de la MEILLEURE actu du cycle (Top 1 absolu)
+    qualified_items.sort(key=lambda x: x[0], reverse=True)
+    best_score, best_item, best_analysis = qualified_items[0]
+    
+    logger.info(f"🏆 PÉPITE RETENUE DU CYCLE : '{best_item['title']}' (Score: {best_score}/10)")
+    
+    if not dry_run:
+        success = notify(best_item, best_analysis)
+        if success:
+            storage.mark_published(best_item["id"])
+            logger.info("Alerte transmise avec succès à l'éditeur sur Telegram.")
+    else:
+        print("\n" + "="*60)
+        print(f"[DRY-RUN TOP 1 RETENU] (Score {best_score}/10)")
+        print(f"Source : {best_item['source']}")
+        print(f"Titre  : {best_item['title']}")
+        print(f"Fait   : {best_analysis.get('factual_core')}")
+        print(f"Tweet  :\n{best_analysis.get('tweet_text')}")
+        print("="*60 + "\n")
 
 def main():
-    parser = argparse.ArgumentParser(description="x-newsletter : veille impartiale & curateur X/Telegram/Discord")
-    parser.add_argument("--test-sources", action="store_true", help="Teste l'ingestion des flux sans analyse")
-    parser.add_argument("--test-telegram", action="store_true", help="Envoie un message de test sur Telegram")
-    parser.add_argument("--test-discord", action="store_true", help="Envoie un message de test au Webhook Discord")
-    parser.add_argument("--dry-run", action="store_true", help="Exécute un cycle sans enregistrer ni envoyer de notification")
+    parser = argparse.ArgumentParser(description="x-newsletter : curateur d'élite impartial")
+    parser.add_argument("--test-sources", action="store_true", help="Teste l'ingestion des flux")
+    parser.add_argument("--dry-run", action="store_true", help="Exécute un cycle sans envoyer de notification")
     parser.add_argument("--once", action="store_true", help="Exécute un seul cycle puis quitte")
     args = parser.parse_args()
 
@@ -72,59 +93,22 @@ def main():
     analyzer = NewsAnalyzer()
 
     if args.test_sources:
-        print("🔍 Test d'ingestion des sources...")
         candidates = get_all_new_candidates(storage)
-        print(f"Trouvé {len(candidates)} items au total :\n")
-        for i, it in enumerate(candidates[:10], 1):
-            print(f"{i}. [{it['source']} - {it['category']}] {it['title']}")
-            print(f"   URL: {it['url']}")
-            print(f"   Contexte: {it['known_bias']}")
-            print(f"   Extrait: {it['summary'][:120]}...\n")
-        return
-
-    sample_item = {
-        "title": "Enquête : Révélations sur l'utilisation des données privées dans la tech",
-        "url": "https://www.mediapart.fr",
-        "source": "Mediapart",
-        "known_bias": "Investigation indépendante"
-    }
-    sample_analysis = {
-        "factual_core": "Une fuite de documents internes révèle le partage non consenti de métadonnées utilisateurs vers des courtiers tiers.",
-        "framing_bias": "Angle d'investigation axé sur la protection de la vie privée et la régulation des GAFAM.",
-        "interest_score": 9,
-        "tweet_text": "🚨 Tech : Une fuite de documents confirme le partage massif de métadonnées utilisateurs vers des data brokers sans consentement explicite.\n\n🔗 https://www.mediapart.fr"
-    }
-
-    if args.test_telegram:
-        print("📨 Envoi d'un message test sur Telegram...")
-        success = send_telegram_notification(sample_item, sample_analysis)
-        if success:
-            print("✅ Test Telegram réussi !")
-        else:
-            print("❌ Échec Telegram (vérifie TELEGRAM_BOT_TOKEN et TELEGRAM_CHAT_ID dans .env)")
-        return
-
-    if args.test_discord:
-        print("📨 Envoi d'un message test sur Discord...")
-        success = send_discord_notification(sample_item, sample_analysis)
-        if success:
-            print("✅ Test Discord réussi !")
-        else:
-            print("❌ Échec Discord (vérifie DISCORD_WEBHOOK_URL dans .env)")
+        print(f"Trouvé {len(candidates)} items bruts.")
         return
 
     if args.dry_run or args.once:
-        run_pipeline_once(storage, analyzer, dry_run=args.dry_run)
+        run_pipeline_cycle(storage, analyzer, dry_run=args.dry_run)
         return
 
-    logger.info(f"x-newsletter démarré en mode continu (intervalle: {POLL_INTERVAL_MINUTES} min).")
+    logger.info(f"x-newsletter en veille active (cycle toutes les {POLL_INTERVAL_MINUTES} min, max {MAX_DAILY_POSTS} posts/jour).")
     while True:
         try:
-            run_pipeline_once(storage, analyzer, dry_run=False)
+            run_pipeline_cycle(storage, analyzer, dry_run=False)
         except Exception as e:
-            logger.error(f"Erreur inattendue dans la boucle principale: {e}", exc_info=True)
-        
-        logger.info(f"En veille pour {POLL_INTERVAL_MINUTES} minutes...")
+            logger.error(f"Erreur inattendue dans la boucle : {e}", exc_info=True)
+            
+        logger.info(f"Prochain cycle dans {POLL_INTERVAL_MINUTES} minutes...")
         time.sleep(POLL_INTERVAL_MINUTES * 60)
 
 if __name__ == "__main__":
