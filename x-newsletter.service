@@ -1,0 +1,15 @@
+[Unit]
+Description=x-newsletter Independent Media & AI Curator Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/x-newsletter
+ExecStart=/opt/x-newsletter/venv/bin/python main.py
+Restart=always
+RestartSec=30
+EnvironmentFile=-/opt/x-newsletter/.env
+
+[Install]
+WantedBy=multi-user.target
