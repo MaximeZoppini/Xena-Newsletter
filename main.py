@@ -5,7 +5,7 @@ from config import DATABASE_PATH, POLL_INTERVAL_SECONDS
 from storage import Storage
 from sources import get_all_new_candidates
 from analyzer import NewsAnalyzer
-from notifier import notify
+from notifier import notify, process_telegram_feedback
 
 logging.basicConfig(
     level=logging.INFO,
@@ -58,7 +58,7 @@ def run_pipeline_cycle(storage: Storage, analyzer: NewsAnalyzer, dry_run: bool =
             logger.info(f"❌ Rejeté ({score}/10) : '{item['title'][:50]}...' -> {reason}")
 
 def main():
-    parser = argparse.ArgumentParser(description="x-newsletter : curateur d'élite impartial en temps réel")
+    parser = argparse.ArgumentParser(description="Xena : IA d'investigation en temps réel")
     parser.add_argument("--test-sources", action="store_true", help="Teste l'ingestion des flux")
     parser.add_argument("--dry-run", action="store_true", help="Exécute un cycle sans envoyer de notification")
     parser.add_argument("--once", action="store_true", help="Exécute un seul cycle puis quitte")
@@ -76,9 +76,14 @@ def main():
         run_pipeline_cycle(storage, analyzer, dry_run=args.dry_run)
         return
 
-    logger.info(f"🚀 x-newsletter en veille TEMPS RÉEL (scan toutes les {POLL_INTERVAL_SECONDS}s, HTTP 304 ETag caching).")
+    logger.info(f"🚀 Xena en veille active TEMPS RÉEL (scan toutes les {POLL_INTERVAL_SECONDS}s, boucle de feedback active).")
+    tg_offset = 0
     while True:
         try:
+            # 1. Vérifier et traiter les clics de feedback sur Telegram
+            tg_offset = process_telegram_feedback(storage, tg_offset)
+            
+            # 2. Cycle de détection de nouvelles enquêtes
             run_pipeline_cycle(storage, analyzer, dry_run=False)
         except Exception as e:
             logger.error(f"Erreur inattendue dans la boucle : {e}", exc_info=True)

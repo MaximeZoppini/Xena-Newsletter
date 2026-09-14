@@ -16,12 +16,13 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 
 # Base de données & Paramètres
 DATABASE_PATH = os.getenv("DATABASE_PATH", str(BASE_DIR / "data" / "x_newsletter.db"))
+CARDS_DIR = os.getenv("CARDS_DIR", str(BASE_DIR / "data" / "cards"))
 
-# Veille en temps réel (intervalle en secondes : 60s pour réactivité immédiate sans bannissement IP)
+# Veille en temps réel (intervalle en secondes : 60s avec ETag caching)
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "60"))
 MIN_INTEREST_SCORE = int(os.getenv("MIN_INTEREST_SCORE", "8"))
 
-# Liste des flux RSS et sources surveillées
+# Liste des flux d'investigation et tech de référence (Médias indépendants uniquement)
 FEEDS = [
     {
         "name": "Mediapart",
@@ -51,25 +52,22 @@ FEEDS = [
         "name": "404 Media",
         "url": "https://www.404media.co/rss/",
         "category": "tech_cyber",
-        "known_bias": "Média tech indépendant fondé par d'anciens journalistes de Vice/Motherboard"
+        "known_bias": "Média tech indépendant axé surveillance, cyber et hacking"
     },
     {
         "name": "Ars Technica",
         "url": "https://feeds.arstechnica.com/arstechnica/index",
         "category": "tech",
-        "known_bias": "Média tech de référence, focus technique et réglementaire"
+        "known_bias": "Média tech de référence, focus réglementaire et technique"
     },
     {
         "name": "BleepingComputer",
         "url": "https://www.bleepingcomputer.com/feed/",
         "category": "cyber",
-        "known_bias": "Spécialisé cybersécurité, failles et menaces"
+        "known_bias": "Spécialisé cybersécurité, vulnérabilités et menaces"
     }
 ]
 
-# API Polymarket
-POLYMARKET_API_URL = "https://gamma-api.polymarket.com/events?limit=10&active=true&closed=false&order=volume24hr&ascending=false"
-
-# API Hacker News
+# API Hacker News (signaux d'ingénieurs)
 HACKER_NEWS_TOP_URL = "https://hacker-news.firebaseio.com/v0/topstories.json"
 HACKER_NEWS_ITEM_URL = "https://hacker-news.firebaseio.com/v0/item/{item_id}.json"

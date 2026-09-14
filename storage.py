@@ -39,10 +39,22 @@ class Storage:
                     factual_core TEXT,
                     framing_detected TEXT,
                     counter_view TEXT,
+                    source_quote TEXT,
                     tweet_text TEXT,
                     published_to_telegram INTEGER DEFAULT 0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (article_id) REFERENCES articles(id)
+                )
+            """)
+            # Table de feedback éditorial (pour apprentissage et calibration future)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS editorial_feedback (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    article_id TEXT NOT NULL,
+                    action TEXT NOT NULL, -- 'tweeted', 'rejected', 'modified'
+                    tweet_text TEXT,
+                    notes TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
             conn.commit()
@@ -85,9 +97,9 @@ class Storage:
             conn.execute("""
                 INSERT OR REPLACE INTO analyses (
                     article_id, systemic_impact, novelty_scoop, evidence_quality, global_score,
-                    factual_core, framing_detected, counter_view, tweet_text
+                    factual_core, framing_detected, counter_view, source_quote, tweet_text
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 article_id,
                 analysis.get("systemic_impact", 0),
@@ -97,6 +109,7 @@ class Storage:
                 analysis.get("factual_core", ""),
                 analysis.get("framing_detected", ""),
                 analysis.get("counter_view", ""),
+                analysis.get("source_quote", ""),
                 analysis.get("tweet_text", "")
             ))
             score = analysis.get("global_score", 0.0)
@@ -110,13 +123,16 @@ class Storage:
             conn.execute("UPDATE articles SET status = 'published' WHERE id = ?", (article_id,))
             conn.commit()
 
-    def count_published_last_24h(self) -> int:
+    def log_feedback(self, article_id: str, action: str, tweet_text: str = "", notes: str = ""):
+        with self._get_connection() as conn:
+            conn.execute("""
+                INSERT INTO editorial_feedback (article_id, action, tweet_text, notes)
+                VALUES (?, ?, ?, ?)
+            """, (article_id, action, tweet_text, notes))
+            conn.commit()
+
+    def get_feedback_stats(self) -> Dict[str, int]:
         with self._get_connection() as conn:
             cur = conn.cursor()
-            cur.execute("""
-                SELECT COUNT(*) as count FROM analyses 
-                WHERE published_to_telegram = 1 
-                AND datetime(created_at) >= datetime('now', '-1 day')
-            """)
-            row = cur.fetchone()
-            return row["count"] if row else 0
+            cur.execute("SELECT action, COUNT(*) as count FROM editorial_feedback GROUP BY action")
+            return {row["action"]: row["count"] for row in cur.fetchall()}

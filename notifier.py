@@ -1,9 +1,11 @@
+import os
 import urllib.parse
 import requests
 import html
 import logging
 from typing import Dict, Any, Optional
-from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, CARDS_DIR
+from card_generator import generate_branded_card
 
 logger = logging.getLogger("notifier")
 
@@ -26,11 +28,12 @@ def send_telegram_notification(item: Dict[str, Any], analysis: Dict[str, Any]) -
     safe_core = html.escape(analysis.get("factual_core", ""))
     safe_bias = html.escape(analysis.get("framing_detected", ""))
     safe_counter = html.escape(analysis.get("counter_view", "Non spécifié"))
+    safe_quote = html.escape(analysis.get("source_quote", ""))
     safe_tweet = html.escape(tweet_text)
 
     score_badge = "🔥 RÉVÉLATION MAJEURE" if score >= 8.8 else "⚡ IMPACT FACTUEL"
 
-    # Layout ergonomique : Tweet tout en haut, analyse repliée en dessous
+    # Layout ergonomique Xena
     caption_text = (
         f"{score_badge} (Score : <b>{score}/10</b>) • <i>{safe_source}</i>\n"
         f"📰 <b>{safe_title}</b>\n\n"
@@ -41,13 +44,14 @@ def send_telegram_notification(item: Dict[str, Any], analysis: Dict[str, Any]) -
         f"🔍 <b>Fait brut vérifié :</b>\n{safe_core}\n\n"
         f"⚖️ <b>Cadrage & Contradictoire :</b>\n"
         f"• <i>Angle source</i> : {safe_bias}\n"
-        f"• <i>Réponse / Nuance</i> : {safe_counter}</blockquote>"
+        f"• <i>Réponse / Nuance</i> : {safe_counter}\n\n"
+        f"📌 <b>Citation source :</b>\n<i>« {safe_quote} »</i></blockquote>"
     )
 
-    # Tronquer si la légende dépasse la limite Telegram de 1024 caractères
     if len(caption_text) > 1020:
         caption_text = caption_text[:1000] + "...</blockquote>"
 
+    # Clavier avec boutons de boucle de feedback (Faable Roadmap #1)
     inline_keyboard = {
         "inline_keyboard": [
             [
@@ -55,56 +59,83 @@ def send_telegram_notification(item: Dict[str, Any], analysis: Dict[str, Any]) -
             ],
             [
                 {"text": "🔗 LIRE L'ARTICLE SOURCE", "url": item["url"]}
+            ],
+            [
+                {"text": "✅ Tweeté / Validé", "callback_data": f"fb:ok:{item['id']}"},
+                {"text": "❌ Rejeter", "callback_data": f"fb:no:{item['id']}"}
             ]
         ]
     }
 
-    # Ne fait sonner le téléphone que pour les séismes majeurs (>= 8.8)
     silent_mode = bool(score < 8.8)
-    image_url = item.get("image_url")
 
-    # 1. Tentative d'envoi avec photo
-    if image_url and image_url.startswith("http"):
+    # 1. Générer la carte visuelle signature (Pillow - zéro violation de copyright)
+    try:
+        card_file = generate_branded_card(item["id"], item["title"], item["source"], score, CARDS_DIR)
         photo_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
-        payload = {
-            "chat_id": TELEGRAM_CHAT_ID,
-            "photo": image_url,
-            "caption": caption_text,
-            "parse_mode": "HTML",
-            "reply_markup": inline_keyboard,
-            "disable_notification": silent_mode
-        }
-        try:
-            resp = requests.post(photo_url, json=payload, timeout=8)
+        
+        with open(card_file, "rb") as f:
+            resp = requests.post(photo_url, data={
+                "chat_id": TELEGRAM_CHAT_ID,
+                "caption": caption_text,
+                "parse_mode": "HTML",
+                "reply_markup": str(inline_keyboard).replace("'", '"'),
+                "disable_notification": silent_mode
+            }, files={"photo": f}, timeout=10)
+            
             if resp.json().get("ok"):
-                logger.info(f"Photo Telegram envoyée pour : {item['title']}")
+                logger.info(f"Carte signature envoyée pour : {item['title']}")
                 return True
-        except Exception as e:
-            logger.warning(f"Échec envoi photo ({e}), bascule vers message texte.")
+    except Exception as e:
+        logger.warning(f"Erreur envoi carte signature ({e}), repli sur message texte.")
 
-    # 2. Fallback message texte si pas d'image ou erreur photo
+    # 2. Fallback message texte
     text_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": caption_text,
         "parse_mode": "HTML",
         "reply_markup": inline_keyboard,
-        "disable_notification": silent_mode,
-        "disable_web_page_preview": False
+        "disable_notification": silent_mode
     }
 
     try:
         resp = requests.post(text_url, json=payload, timeout=10)
-        res_data = resp.json()
-        if res_data.get("ok"):
-            logger.info(f"Notification Telegram envoyée pour : {item['title']}")
-            return True
-        else:
-            logger.error(f"Erreur Telegram: {res_data}")
-            return False
+        return resp.json().get("ok", False)
     except Exception as e:
         logger.error(f"Exception lors de l'envoi Telegram: {e}")
         return False
+
+def process_telegram_feedback(storage, offset: int = 0) -> int:
+    """Traite les clics sur les boutons de feedback pour la boucle d'apprentissage"""
+    if not TELEGRAM_BOT_TOKEN:
+        return offset
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={offset}&timeout=1"
+        resp = requests.get(url, timeout=3).json()
+        if not resp.get("ok"):
+            return offset
+            
+        for update in resp.get("result", []):
+            offset = max(offset, update["update_id"] + 1)
+            cb = update.get("callback_query")
+            if not cb:
+                continue
+                
+            data = cb.get("data", "")
+            if data.startswith("fb:"):
+                _, action, art_id = data.split(":", 2)
+                act_label = "tweeted" if action == "ok" else "rejected"
+                storage.log_feedback(art_id, act_label)
+                logger.info(f"Feedback enregistré : {art_id} -> {act_label}")
+                
+                # Accuser réception dans Telegram
+                ans_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery"
+                msg = "✅ Noté comme publié sur X !" if action == "ok" else "❌ Noté comme rejeté."
+                requests.post(ans_url, json={"callback_query_id": cb["id"], "text": msg}, timeout=3)
+    except Exception as e:
+        logger.debug(f"Erreur polling feedback: {e}")
+    return offset
 
 def notify(item: Dict[str, Any], analysis: Dict[str, Any]):
     return send_telegram_notification(item, analysis)
