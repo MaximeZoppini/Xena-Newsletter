@@ -1,7 +1,7 @@
 import json
 import logging
 from typing import Dict, Any, Optional
-from config import GEMINI_API_KEY, MIN_INTEREST_SCORE
+from config import GEMINI_API_KEY, GEMINI_MODEL, MIN_INTEREST_SCORE
 
 logger = logging.getLogger("analyzer")
 
@@ -58,7 +58,7 @@ CONTENU/RÉSUMÉ :
         try:
             from google.genai import types
             response = self.client.models.generate_content(
-                model='gemini-2.5-flash',
+                model=GEMINI_MODEL,
                 contents=user_content,
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_PROMPT,
@@ -67,7 +67,6 @@ CONTENU/RÉSUMÉ :
                 )
             )
             raw_text = response.text.strip()
-            # Nettoyage markdown éventuel
             if raw_text.startswith("```json"):
                 raw_text = raw_text[7:]
             if raw_text.startswith("```"):
@@ -76,7 +75,6 @@ CONTENU/RÉSUMÉ :
                 raw_text = raw_text[:-3]
 
             data = json.loads(raw_text.strip())
-            # Ajouter l'URL à la fin du tweet si elle n'y est pas
             tweet = data.get("tweet_text", "")
             if item['url'] not in tweet:
                 tweet = f"{tweet}\n\n🔗 {item['url']}"

@@ -1,11 +1,11 @@
 import time
 import argparse
 import logging
-from config import DATABASE_PATH, POLL_INTERVAL_MINUTES, MIN_INTEREST_SCORE, GEMINI_API_KEY, DISCORD_WEBHOOK_URL
+from config import DATABASE_PATH, POLL_INTERVAL_MINUTES, MIN_INTEREST_SCORE, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 from storage import Storage
 from sources import get_all_new_candidates
 from analyzer import NewsAnalyzer
-from notifier import send_discord_notification
+from notifier import notify, send_telegram_notification, send_discord_notification
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,12 +23,10 @@ def run_pipeline_once(storage: Storage, analyzer: NewsAnalyzer, dry_run: bool = 
 
     logger.info(f"{len(candidates)} nouvelles informations à analyser.")
     
-    # Traiter en priorité les items (on limite à 10 max par cycle pour éviter le spam)
     processed = 0
     for item in candidates:
         logger.info(f"Analyse de : {item['title']} ({item['source']})")
         
-        # Sauvegarde initiale dans SQLite
         if not dry_run:
             storage.save_article(item)
             
@@ -45,8 +43,8 @@ def run_pipeline_once(storage: Storage, analyzer: NewsAnalyzer, dry_run: bool = 
         if score >= MIN_INTEREST_SCORE:
             logger.info(f"✨ Retenu pour publication (Score {score} >= {MIN_INTEREST_SCORE})")
             if not dry_run:
-                send_discord_notification(item, analysis)
-                time.sleep(2) # Pause anti-rate limit Discord
+                notify(item, analysis)
+                time.sleep(2)
             else:
                 print("\n" + "="*50)
                 print(f"[DRY-RUN TWEET RETENU] ({item['source']})")
@@ -62,10 +60,11 @@ def run_pipeline_once(storage: Storage, analyzer: NewsAnalyzer, dry_run: bool = 
     logger.info(f"Cycle terminé. {processed} alertes traitées.")
 
 def main():
-    parser = argparse.ArgumentParser(description="x-newsletter : veille impartiale & curateur X/Discord")
+    parser = argparse.ArgumentParser(description="x-newsletter : veille impartiale & curateur X/Telegram/Discord")
     parser.add_argument("--test-sources", action="store_true", help="Teste l'ingestion des flux sans analyse")
+    parser.add_argument("--test-telegram", action="store_true", help="Envoie un message de test sur Telegram")
     parser.add_argument("--test-discord", action="store_true", help="Envoie un message de test au Webhook Discord")
-    parser.add_argument("--dry-run", action="store_true", help="Exécute un cycle sans enregistrer ni poster sur Discord")
+    parser.add_argument("--dry-run", action="store_true", help="Exécute un cycle sans enregistrer ni envoyer de notification")
     parser.add_argument("--once", action="store_true", help="Exécute un seul cycle puis quitte")
     args = parser.parse_args()
 
@@ -83,32 +82,41 @@ def main():
             print(f"   Extrait: {it['summary'][:120]}...\n")
         return
 
+    sample_item = {
+        "title": "Enquête : Révélations sur l'utilisation des données privées dans la tech",
+        "url": "https://www.mediapart.fr",
+        "source": "Mediapart",
+        "known_bias": "Investigation indépendante"
+    }
+    sample_analysis = {
+        "factual_core": "Une fuite de documents internes révèle le partage non consenti de métadonnées utilisateurs vers des courtiers tiers.",
+        "framing_bias": "Angle d'investigation axé sur la protection de la vie privée et la régulation des GAFAM.",
+        "interest_score": 9,
+        "tweet_text": "🚨 Tech : Une fuite de documents confirme le partage massif de métadonnées utilisateurs vers des data brokers sans consentement explicite.\n\n🔗 https://www.mediapart.fr"
+    }
+
+    if args.test_telegram:
+        print("📨 Envoi d'un message test sur Telegram...")
+        success = send_telegram_notification(sample_item, sample_analysis)
+        if success:
+            print("✅ Test Telegram réussi !")
+        else:
+            print("❌ Échec Telegram (vérifie TELEGRAM_BOT_TOKEN et TELEGRAM_CHAT_ID dans .env)")
+        return
+
     if args.test_discord:
         print("📨 Envoi d'un message test sur Discord...")
-        sample_item = {
-            "title": "Enquête : Révélations sur l'utilisation des données privées dans la tech",
-            "url": "https://www.mediapart.fr",
-            "source": "Mediapart",
-            "known_bias": "Investigation indépendante"
-        }
-        sample_analysis = {
-            "factual_core": "Une fuite de documents internes révèle le partage non consenti de métadonnées utilisateurs vers des courtiers tiers.",
-            "framing_bias": "Angle d'investigation axé sur la protection de la vie privée et la régulation des GAFAM.",
-            "interest_score": 9,
-            "tweet_text": "🚨 Tech : Une fuite de documents confirme le partage massif de métadonnées utilisateurs vers des data brokers sans consentement explicite.\n\n🔗 https://www.mediapart.fr"
-        }
         success = send_discord_notification(sample_item, sample_analysis)
         if success:
             print("✅ Test Discord réussi !")
         else:
-            print("❌ Échec de l'envoi Discord (vérifie DISCORD_WEBHOOK_URL dans .env)")
+            print("❌ Échec Discord (vérifie DISCORD_WEBHOOK_URL dans .env)")
         return
 
     if args.dry_run or args.once:
         run_pipeline_once(storage, analyzer, dry_run=args.dry_run)
         return
 
-    # Mode démon continu
     logger.info(f"x-newsletter démarré en mode continu (intervalle: {POLL_INTERVAL_MINUTES} min).")
     while True:
         try:

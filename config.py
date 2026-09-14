@@ -8,6 +8,10 @@ load_dotenv(BASE_DIR / ".env")
 
 # Clés API et Webhooks
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
+
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 
 # Base de données & Paramètres
@@ -17,7 +21,6 @@ MIN_INTEREST_SCORE = int(os.getenv("MIN_INTEREST_SCORE", "7"))
 
 # Liste des flux RSS et sources surveillées
 FEEDS = [
-    # Médias d'investigation & indépendants
     {
         "name": "Mediapart",
         "url": "https://www.mediapart.fr/articles/feed",
