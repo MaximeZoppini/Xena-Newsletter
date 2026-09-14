@@ -2,7 +2,6 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Charger le fichier .env
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
@@ -18,17 +17,19 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 DATABASE_PATH = os.getenv("DATABASE_PATH", str(BASE_DIR / "data" / "x_newsletter.db"))
 CARDS_DIR = os.getenv("CARDS_DIR", str(BASE_DIR / "data" / "cards"))
 
-# Veille en temps réel (intervalle en secondes : 60s avec ETag caching)
+# Veille en temps réel (scan toutes les 60s avec ETag caching)
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "60"))
-MIN_INTEREST_SCORE = int(os.getenv("MIN_INTEREST_SCORE", "8"))
 
-# Liste des flux d'investigation et tech de référence (Médias indépendants uniquement)
+# Seuil d'admissibilité éditoriale (Faable recommande ≥ 7.5 pour attraper les vraies enquêtes de fond)
+MIN_INTEREST_SCORE = float(os.getenv("MIN_INTEREST_SCORE", "7.5"))
+
+# Flux d'investigation et tech surveillés
 FEEDS = [
     {
         "name": "Mediapart",
         "url": "https://www.mediapart.fr/articles/feed",
         "category": "investigation",
-        "known_bias": "Média d'investigation indépendant, orientation gauche / critique du pouvoir"
+        "known_bias": "Média d'investigation indépendant, critique du pouvoir"
     },
     {
         "name": "Disclose",
@@ -68,6 +69,6 @@ FEEDS = [
     }
 ]
 
-# API Hacker News (signaux d'ingénieurs)
+# API Hacker News
 HACKER_NEWS_TOP_URL = "https://hacker-news.firebaseio.com/v0/topstories.json"
 HACKER_NEWS_ITEM_URL = "https://hacker-news.firebaseio.com/v0/item/{item_id}.json"

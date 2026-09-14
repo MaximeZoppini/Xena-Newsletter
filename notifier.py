@@ -1,11 +1,12 @@
 import os
+import json
 import urllib.parse
 import requests
 import html
 import logging
 from typing import Dict, Any, Optional
 from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, CARDS_DIR
-from card_generator import generate_branded_card
+from card_generator import generate_entity_card
 
 logger = logging.getLogger("notifier")
 
@@ -22,6 +23,8 @@ def send_telegram_notification(item: Dict[str, Any], analysis: Dict[str, Any]) -
     impact = analysis.get("systemic_impact", 0)
     novelty = analysis.get("novelty_scoop", 0)
     evidence = analysis.get("evidence_quality", 0)
+    entity = analysis.get("target_entity") or item.get("source", "")
+    domain = analysis.get("target_domain")
 
     safe_title = html.escape(item['title'])
     safe_source = html.escape(item['source'])
@@ -33,13 +36,13 @@ def send_telegram_notification(item: Dict[str, Any], analysis: Dict[str, Any]) -
 
     score_badge = "🔥 RÉVÉLATION MAJEURE" if score >= 8.8 else "⚡ IMPACT FACTUEL"
 
-    # Layout ergonomique Xena
+    # Layout : Tweet en haut prêt à copier, analyse complète repliée
     caption_text = (
         f"{score_badge} (Score : <b>{score}/10</b>) • <i>{safe_source}</i>\n"
         f"📰 <b>{safe_title}</b>\n\n"
         f"✍️ <b>Tweet prêt à publier :</b> <i>(tap pour copier)</i>\n"
         f"<code>{safe_tweet}</code>\n\n"
-        f"<blockquote expandable>📊 <b>Analyse de Xena (Pourquoi cette actu) :</b>\n"
+        f"<blockquote expandable>📊 <b>Analyse de Xena :</b>\n"
         f"• Impact : <b>{impact}/10</b> | Inédit : <b>{novelty}/10</b> | Preuves : <b>{evidence}/10</b>\n\n"
         f"🔍 <b>Fait brut vérifié :</b>\n{safe_core}\n\n"
         f"⚖️ <b>Cadrage & Contradictoire :</b>\n"
@@ -51,7 +54,6 @@ def send_telegram_notification(item: Dict[str, Any], analysis: Dict[str, Any]) -
     if len(caption_text) > 1020:
         caption_text = caption_text[:1000] + "...</blockquote>"
 
-    # Clavier avec boutons de boucle de feedback (Faable Roadmap #1)
     inline_keyboard = {
         "inline_keyboard": [
             [
@@ -69,9 +71,9 @@ def send_telegram_notification(item: Dict[str, Any], analysis: Dict[str, Any]) -
 
     silent_mode = bool(score < 8.8)
 
-    # 1. Générer la carte visuelle signature (Pillow - zéro violation de copyright)
+    # 1. Générer la carte visuelle pure (LOGO SEUL au centre, SANS TEXTE)
     try:
-        card_file = generate_branded_card(item["id"], item["title"], item["source"], score, CARDS_DIR)
+        card_file = generate_entity_card(item["id"], domain, CARDS_DIR)
         photo_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
         
         with open(card_file, "rb") as f:
@@ -79,17 +81,17 @@ def send_telegram_notification(item: Dict[str, Any], analysis: Dict[str, Any]) -
                 "chat_id": TELEGRAM_CHAT_ID,
                 "caption": caption_text,
                 "parse_mode": "HTML",
-                "reply_markup": str(inline_keyboard).replace("'", '"'),
+                "reply_markup": json.dumps(inline_keyboard),
                 "disable_notification": silent_mode
             }, files={"photo": f}, timeout=10)
             
             if resp.json().get("ok"):
-                logger.info(f"Carte signature envoyée pour : {item['title']}")
+                logger.info(f"Carte logo envoyée pour : {item['title']} (Entité: {entity})")
                 return True
     except Exception as e:
-        logger.warning(f"Erreur envoi carte signature ({e}), repli sur message texte.")
+        logger.warning(f"Erreur envoi carte logo ({e}), repli sur message texte.")
 
-    # 2. Fallback message texte
+    # 2. Fallback message texte si échec image
     text_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
@@ -107,7 +109,6 @@ def send_telegram_notification(item: Dict[str, Any], analysis: Dict[str, Any]) -
         return False
 
 def process_telegram_feedback(storage, offset: int = 0) -> int:
-    """Traite les clics sur les boutons de feedback pour la boucle d'apprentissage"""
     if not TELEGRAM_BOT_TOKEN:
         return offset
     try:
@@ -129,9 +130,8 @@ def process_telegram_feedback(storage, offset: int = 0) -> int:
                 storage.log_feedback(art_id, act_label)
                 logger.info(f"Feedback enregistré : {art_id} -> {act_label}")
                 
-                # Accuser réception dans Telegram
                 ans_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery"
-                msg = "✅ Noté comme publié sur X !" if action == "ok" else "❌ Noté comme rejeté."
+                msg = "✅ Enregistré comme Tweeté sur X !" if action == "ok" else "❌ Enregistré comme Rejeté."
                 requests.post(ans_url, json={"callback_query_id": cb["id"], "text": msg}, timeout=3)
     except Exception as e:
         logger.debug(f"Erreur polling feedback: {e}")

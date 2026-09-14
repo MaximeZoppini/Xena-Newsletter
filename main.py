@@ -1,7 +1,7 @@
 import time
 import argparse
 import logging
-from config import DATABASE_PATH, POLL_INTERVAL_SECONDS
+from config import DATABASE_PATH, POLL_INTERVAL_SECONDS, MIN_INTEREST_SCORE
 from storage import Storage
 from sources import get_all_new_candidates
 from analyzer import NewsAnalyzer
@@ -35,8 +35,8 @@ def run_pipeline_cycle(storage: Storage, analyzer: NewsAnalyzer, dry_run: bool =
         if not dry_run:
             storage.save_analysis(item["id"], analysis)
             
-        # Seuil d'éligibilité : Score global >= 8.0 ET Nouveauté >= 7
-        if score >= 8.0 and novelty >= 7:
+        # Seuil d'éligibilité : Score global >= MIN_INTEREST_SCORE (7.5) ET Nouveauté >= 7
+        if score >= MIN_INTEREST_SCORE and novelty >= 7:
             logger.info(f"🎯 RETENU : '{item['title'][:60]}...' (Score {score}/10, Nouveauté {novelty}/10)")
             qualified_count += 1
             
@@ -76,14 +76,11 @@ def main():
         run_pipeline_cycle(storage, analyzer, dry_run=args.dry_run)
         return
 
-    logger.info(f"🚀 Xena en veille active TEMPS RÉEL (scan toutes les {POLL_INTERVAL_SECONDS}s, boucle de feedback active).")
+    logger.info(f"🚀 Xena en veille active TEMPS RÉEL (scan toutes les {POLL_INTERVAL_SECONDS}s, seuil ≥ {MIN_INTEREST_SCORE}/10).")
     tg_offset = 0
     while True:
         try:
-            # 1. Vérifier et traiter les clics de feedback sur Telegram
             tg_offset = process_telegram_feedback(storage, tg_offset)
-            
-            # 2. Cycle de détection de nouvelles enquêtes
             run_pipeline_cycle(storage, analyzer, dry_run=False)
         except Exception as e:
             logger.error(f"Erreur inattendue dans la boucle : {e}", exc_info=True)
