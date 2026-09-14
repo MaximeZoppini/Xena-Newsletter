@@ -179,7 +179,7 @@ GEMINI_API_KEY=votre_cle_google_ai_studio
 GEMINI_MODEL=gemini-3.6-flash
 TELEGRAM_BOT_TOKEN=token_du_bot
 TELEGRAM_CHAT_ID=votre_id_telegram
-POLL_INTERVAL_MINUTES=20
+POLL_INTERVAL_MINUTES=5
 DATABASE_PATH=data/x_newsletter.db
 ```
 
