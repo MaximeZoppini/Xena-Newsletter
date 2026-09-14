@@ -16,8 +16,10 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 
 # Base de données & Paramètres
 DATABASE_PATH = os.getenv("DATABASE_PATH", str(BASE_DIR / "data" / "x_newsletter.db"))
-POLL_INTERVAL_MINUTES = int(os.getenv("POLL_INTERVAL_MINUTES", "5"))
-MIN_INTEREST_SCORE = int(os.getenv("MIN_INTEREST_SCORE", "7"))
+
+# Veille en temps réel (intervalle en secondes : 60s pour réactivité immédiate sans bannissement IP)
+POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "60"))
+MIN_INTEREST_SCORE = int(os.getenv("MIN_INTEREST_SCORE", "8"))
 
 # Liste des flux RSS et sources surveillées
 FEEDS = [

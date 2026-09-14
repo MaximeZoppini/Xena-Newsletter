@@ -11,10 +11,13 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("sources")
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (compatible; XNewsletterBot/2.0; +https://github.com/)"
+    "User-Agent": "Mozilla/5.0 (compatible; XenaRealtimeCurator/3.0; +https://github.com/MaximeZoppini/Xena-Newsletter)"
 }
 
-# Mots-clés de rejet automatique sans appel IA (économie d'API)
+# Cache HTTP pour le temps réel (ETag et Last-Modified)
+FEED_CACHE: Dict[str, Dict[str, str]] = {}
+
+# Mots-clés de rejet automatique sans appel IA
 REJECT_KEYWORDS = [
     r"\bj'ai acheté\b", r"\bj'ai testé\b", r"\btest\b", r"\breview\b",
     r"\bbilan\b", r"\bvidéo\b", r"\btwitch\b", r"\bchronique\b",
@@ -34,7 +37,6 @@ def clean_html(raw_html: str) -> str:
     return " ".join(text.split())[:1200]
 
 def extract_image_url(entry: Any, article_url: str) -> Optional[str]:
-    # 1. Vérifier dans les métadonnées RSS (enclosures / media_content)
     if hasattr(entry, "media_content") and entry.media_content:
         for m in entry.media_content:
             if m.get("url") and "image" in m.get("type", "image"):
@@ -44,7 +46,6 @@ def extract_image_url(entry: Any, article_url: str) -> Optional[str]:
             if enc.get("href") and "image" in enc.get("type", "image"):
                 return enc["href"]
     
-    # 2. Fallback rapide via og:image avec timeout court
     try:
         resp = requests.get(article_url, headers=HEADERS, timeout=3)
         if resp.status_code == 200:
@@ -61,49 +62,66 @@ def extract_image_url(entry: Any, article_url: str) -> Optional[str]:
 def fetch_rss_feeds() -> List[Dict[str, Any]]:
     items = []
     for feed_info in FEEDS:
+        url = feed_info["url"]
+        req_headers = dict(HEADERS)
+        
+        # Envoi conditionnel ETag / Last-Modified
+        if url in FEED_CACHE:
+            if FEED_CACHE[url].get("etag"):
+                req_headers["If-None-Match"] = FEED_CACHE[url]["etag"]
+            if FEED_CACHE[url].get("last_modified"):
+                req_headers["If-Modified-Since"] = FEED_CACHE[url]["last_modified"]
+
         try:
-            logger.info(f"Fetching RSS: {feed_info['name']}")
-            resp = requests.get(feed_info["url"], headers=HEADERS, timeout=8)
-            parsed = feedparser.parse(resp.content)
+            resp = requests.get(url, headers=req_headers, timeout=6)
             
-            # On prend seulement les 2 dernières dépêches pour rester ultra-frais
-            for entry in parsed.entries[:2]:
-                title = entry.get("title", "").strip()
-                url = entry.get("link", "").strip()
-                if not title or not url:
-                    continue
+            # 304 = Aucun changement depuis le dernier check
+            if resp.status_code == 304:
+                continue
+
+            if resp.status_code == 200:
+                # Mise à jour du cache d'en-têtes
+                FEED_CACHE[url] = {
+                    "etag": resp.headers.get("ETag", ""),
+                    "last_modified": resp.headers.get("Last-Modified", "")
+                }
+                
+                parsed = feedparser.parse(resp.content)
+                for entry in parsed.entries[:2]:
+                    title = entry.get("title", "").strip()
+                    link = entry.get("link", "").strip()
+                    if not title or not link:
+                        continue
+                        
+                    if should_skip_title(title):
+                        continue
                     
-                # Pré-filtrage local anti-bruit
-                if should_skip_title(title):
-                    logger.info(f"⏩ Pré-filtré localement (titre banni): {title}")
-                    continue
-                
-                raw_summary = entry.get("summary") or entry.get("description", "")
-                summary = clean_html(raw_summary)
-                pub_date = entry.get("published", "") or entry.get("updated", "")
-                image_url = extract_image_url(entry, url)
-                
-                items.append({
-                    "id": Storage.generate_id(url, title),
-                    "title": title,
-                    "url": url,
-                    "source": feed_info["name"],
-                    "category": feed_info["category"],
-                    "known_bias": feed_info["known_bias"],
-                    "summary": summary,
-                    "image_url": image_url,
-                    "published_at": pub_date
-                })
+                    raw_summary = entry.get("summary") or entry.get("description", "")
+                    summary = clean_html(raw_summary)
+                    pub_date = entry.get("published", "") or entry.get("updated", "")
+                    image_url = extract_image_url(entry, link)
+                    
+                    items.append({
+                        "id": Storage.generate_id(link, title),
+                        "title": title,
+                        "url": link,
+                        "source": feed_info["name"],
+                        "category": feed_info["category"],
+                        "known_bias": feed_info["known_bias"],
+                        "summary": summary,
+                        "image_url": image_url,
+                        "published_at": pub_date
+                    })
         except Exception as e:
-            logger.warning(f"Failed to fetch {feed_info['name']}: {e}")
+            logger.debug(f"Erreur légère fetch RSS {feed_info['name']}: {e}")
     return items
 
 def fetch_hacker_news() -> List[Dict[str, Any]]:
     items = []
     try:
-        resp = requests.get(HACKER_NEWS_TOP_URL, headers=HEADERS, timeout=6)
+        resp = requests.get(HACKER_NEWS_TOP_URL, headers=HEADERS, timeout=5)
         if resp.status_code == 200:
-            top_ids = resp.json()[:4] # Top 4
+            top_ids = resp.json()[:3]
             for item_id in top_ids:
                 item_resp = requests.get(HACKER_NEWS_ITEM_URL.format(item_id=item_id), headers=HEADERS, timeout=4)
                 if item_resp.status_code == 200:
@@ -127,16 +145,16 @@ def fetch_hacker_news() -> List[Dict[str, Any]]:
                         "published_at": str(data.get("time", ""))
                     })
     except Exception as e:
-        logger.warning(f"Failed to fetch Hacker News: {e}")
+        logger.debug(f"Erreur fetch Hacker News: {e}")
     return items
 
 def fetch_polymarket() -> List[Dict[str, Any]]:
     items = []
     try:
-        resp = requests.get(POLYMARKET_API_URL, headers=HEADERS, timeout=8)
+        resp = requests.get(POLYMARKET_API_URL, headers=HEADERS, timeout=6)
         if resp.status_code == 200:
             events = resp.json()
-            for ev in events[:3]:
+            for ev in events[:2]:
                 title = ev.get("title", "").strip()
                 if not title:
                     continue
@@ -168,7 +186,7 @@ def fetch_polymarket() -> List[Dict[str, Any]]:
                     "published_at": ""
                 })
     except Exception as e:
-        logger.warning(f"Failed to fetch Polymarket: {e}")
+        logger.debug(f"Erreur fetch Polymarket: {e}")
     return items
 
 def get_all_new_candidates(storage: Storage) -> List[Dict[str, Any]]:
@@ -185,5 +203,4 @@ def get_all_new_candidates(storage: Storage) -> List[Dict[str, Any]]:
         if not storage.is_seen(item["id"], item["url"]):
             all_candidates.append(item)
             
-    logger.info(f"Total novel candidates after pre-filtering: {len(all_candidates)}")
     return all_candidates
