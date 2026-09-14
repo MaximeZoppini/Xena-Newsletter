@@ -3,7 +3,7 @@ import requests
 import html
 import logging
 from typing import Dict, Any, Optional
-from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, DISCORD_WEBHOOK_URL
+from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 
 logger = logging.getLogger("notifier")
 
@@ -12,7 +12,7 @@ def send_telegram_notification(item: Dict[str, Any], analysis: Dict[str, Any]) -
         logger.warning("TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID manquant.")
         return False
 
-    tweet_text = analysis.get("tweet_text", "")
+    tweet_text = analysis.get("tweet_text", "").strip()
     encoded_tweet = urllib.parse.quote(tweet_text)
     twitter_intent_url = f"https://twitter.com/intent/tweet?text={encoded_tweet}"
 
@@ -28,56 +28,79 @@ def send_telegram_notification(item: Dict[str, Any], analysis: Dict[str, Any]) -
     safe_counter = html.escape(analysis.get("counter_view", "Non spécifié"))
     safe_tweet = html.escape(tweet_text)
 
-    score_badge = "🔥 RÉVÉLATION MAJEURE" if score >= 8.8 else "⚡ HAUT IMPACT FACTUEL"
+    score_badge = "🔥 RÉVÉLATION MAJEURE" if score >= 8.8 else "⚡ IMPACT FACTUEL"
 
-    message_text = (
-        f"👑 <b>Xena — Sélection Éditoriale</b>\n"
-        f"────────────────────\n"
-        f"{score_badge} • <b>Score : {score}/10</b>\n\n"
-        f"📰 <b>Sujet :</b> {safe_title}\n"
-        f"🏢 <b>Origine :</b> <i>{safe_source}</i>\n\n"
-        f"📊 <b>Grille d'évaluation :</b>\n"
-        f"• Impact systémique : <b>{impact}/10</b>\n"
-        f"• Révélation / Inédit : <b>{novelty}/10</b>\n"
-        f"• Solidité des preuves : <b>{evidence}/10</b>\n\n"
-        f"🔍 <b>Le fait brut :</b>\n{safe_core}\n\n"
+    # Layout ergonomique : Tweet tout en haut, analyse repliée en dessous
+    caption_text = (
+        f"{score_badge} (Score : <b>{score}/10</b>) • <i>{safe_source}</i>\n"
+        f"📰 <b>{safe_title}</b>\n\n"
+        f"✍️ <b>Tweet prêt à publier :</b> <i>(tap pour copier)</i>\n"
+        f"<code>{safe_tweet}</code>\n\n"
+        f"<blockquote expandable>📊 <b>Analyse de Xena (Pourquoi cette actu) :</b>\n"
+        f"• Impact : <b>{impact}/10</b> | Inédit : <b>{novelty}/10</b> | Preuves : <b>{evidence}/10</b>\n\n"
+        f"🔍 <b>Fait brut vérifié :</b>\n{safe_core}\n\n"
         f"⚖️ <b>Cadrage & Contradictoire :</b>\n"
         f"• <i>Angle source</i> : {safe_bias}\n"
-        f"• <i>Réponse / Nuance</i> : {safe_counter}\n\n"
-        f"🐦 <b>Proposition de Tweet (Impartial & Percutant) :</b>\n"
-        f"<code>{safe_tweet}</code>\n"
-        f"────────────────────\n"
-        f"<i>Cliquez pour vérifier et publier en un instant sur X :</i>"
+        f"• <i>Réponse / Nuance</i> : {safe_counter}</blockquote>"
     )
+
+    # Tronquer si la légende dépasse la limite Telegram de 1024 caractères
+    if len(caption_text) > 1020:
+        caption_text = caption_text[:1000] + "...</blockquote>"
 
     inline_keyboard = {
         "inline_keyboard": [
             [
-                {"text": "🐦 VALIDER & TWEETER EN 1 CLIC", "url": twitter_intent_url}
+                {"text": "🐦 VALIDER SUR X (1 CLIC)", "url": twitter_intent_url}
             ],
             [
-                {"text": "🔗 Examiner la source", "url": item["url"]}
+                {"text": "🔗 LIRE L'ARTICLE SOURCE", "url": item["url"]}
             ]
         ]
     }
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    # Ne fait sonner le téléphone que pour les séismes majeurs (>= 8.8)
+    silent_mode = bool(score < 8.8)
+    image_url = item.get("image_url")
+
+    # 1. Tentative d'envoi avec photo
+    if image_url and image_url.startswith("http"):
+        photo_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "photo": image_url,
+            "caption": caption_text,
+            "parse_mode": "HTML",
+            "reply_markup": inline_keyboard,
+            "disable_notification": silent_mode
+        }
+        try:
+            resp = requests.post(photo_url, json=payload, timeout=8)
+            if resp.json().get("ok"):
+                logger.info(f"Photo Telegram envoyée pour : {item['title']}")
+                return True
+        except Exception as e:
+            logger.warning(f"Échec envoi photo ({e}), bascule vers message texte.")
+
+    # 2. Fallback message texte si pas d'image ou erreur photo
+    text_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
-        "text": message_text,
+        "text": caption_text,
         "parse_mode": "HTML",
         "reply_markup": inline_keyboard,
-        "disable_web_page_preview": True
+        "disable_notification": silent_mode,
+        "disable_web_page_preview": False
     }
 
     try:
-        resp = requests.post(url, json=payload, timeout=10)
+        resp = requests.post(text_url, json=payload, timeout=10)
         res_data = resp.json()
         if res_data.get("ok"):
             logger.info(f"Notification Telegram envoyée pour : {item['title']}")
             return True
         else:
-            logger.error(f"Erreur Telegram ({resp.status_code}): {res_data}")
+            logger.error(f"Erreur Telegram: {res_data}")
             return False
     except Exception as e:
         logger.error(f"Exception lors de l'envoi Telegram: {e}")
