@@ -66,6 +66,12 @@ FEEDS = [
         "url": "https://www.bleepingcomputer.com/feed/",
         "category": "cyber",
         "known_bias": "Spécialisé cybersécurité, vulnérabilités et menaces"
+    },
+    {
+        "name": "Alignment Forum",
+        "url": "https://www.alignmentforum.org/feed.xml",
+        "category": "ai_safety",
+        "known_bias": "Plateforme de recherche & whistleblowing en sécurité AGI (DeepMind, Anthropic, OpenAI)"
     }
 ]
 
