@@ -72,6 +72,18 @@ FEEDS = [
         "url": "https://www.alignmentforum.org/feed.xml",
         "category": "ai_safety",
         "known_bias": "Plateforme de recherche & whistleblowing en sécurité AGI (DeepMind, Anthropic, OpenAI)"
+    },
+    {
+        "name": "The Guardian Technology",
+        "url": "https://www.theguardian.com/technology/rss",
+        "category": "tech_investigation",
+        "known_bias": "Média international de référence, enquêtes Big Tech et IA"
+    },
+    {
+        "name": "EFF",
+        "url": "https://www.eff.org/rss/updates.xml",
+        "category": "digital_rights",
+        "known_bias": "ONG pionnière sur les libertés numériques, surveillance et chiffrement"
     }
 ]
 

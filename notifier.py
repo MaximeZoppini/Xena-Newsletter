@@ -11,14 +11,14 @@ from card_generator import generate_entity_card
 logger = logging.getLogger("notifier")
 
 STYLE_LABELS = {
-    "contradiction": "Contradiction (Révélation vs Défense)",
-    "deroule_brut": "Déroulé brut chronologique",
-    "insider": "Insider direct"
+    "contradiction": "Contradiction (Leak vs Official Defense)",
+    "deroule_brut": "Raw Breakdown",
+    "insider": "Direct Insider"
 }
 
 def send_telegram_notification(item: Dict[str, Any], analysis: Dict[str, Any]) -> bool:
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        logger.warning("TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID manquant.")
+        logger.warning("TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID missing.")
         return False
 
     tweet_text = analysis.get("tweet_text", "").strip()
@@ -37,39 +37,39 @@ def send_telegram_notification(item: Dict[str, Any], analysis: Dict[str, Any]) -
     safe_source = html.escape(item['source'])
     safe_core = html.escape(analysis.get("factual_core", "")[:120])
     safe_bias = html.escape(analysis.get("framing_detected", "")[:70])
-    safe_counter = html.escape(analysis.get("counter_view", "Non spécifié")[:80])
+    safe_counter = html.escape(analysis.get("counter_view", "Unspecified")[:80])
     safe_quote = html.escape(analysis.get("source_quote", "")[:100])
     safe_tweet = html.escape(tweet_text)
 
-    score_badge = "🔥 RÉVÉLATION MAJEURE" if score >= 8.8 else "⚡ IMPACT FACTUEL"
+    score_badge = "🔥 MAJOR REVELATION" if score >= 8.8 else "⚡ FACTUAL IMPACT"
 
-    # Layout : Tweet en haut prêt à copier, analyse complète repliée
+    # Layout: Tweet on top ready to tap-to-copy, expandable deep-dive
     caption_text = (
-        f"{score_badge} (Score : <b>{score}/10</b>) • <i>{safe_source}</i>\n"
+        f"{score_badge} (Score: <b>{score}/10</b>) • <i>{safe_source}</i>\n"
         f"📰 <b>{safe_title}</b>\n\n"
-        f"✍️ <b>Tweet proposé :</b> <i>(tap pour copier)</i>\n"
+        f"✍️ <b>Suggested Tweet:</b> <i>(tap to copy)</i>\n"
         f"<code>{safe_tweet}</code>\n\n"
-        f"<blockquote expandable>📊 <b>Analyse de Xena :</b>\n"
-        f"• Format choisi : <b>{style_label}</b>\n"
-        f"• Impact : <b>{impact}/10</b> | Inédit : <b>{novelty}/10</b> | Preuves : <b>{evidence}/10</b>\n\n"
-        f"🔍 <b>Fait brut vérifié :</b>\n{safe_core}\n\n"
-        f"⚖️ <b>Cadrage & Contradictoire :</b>\n"
-        f"• <i>Angle source</i> : {safe_bias}\n"
-        f"• <i>Réponse / Nuance</i> : {safe_counter}\n\n"
-        f"📌 <b>Citation source :</b>\n<i>« {safe_quote} »</i></blockquote>"
+        f"<blockquote expandable>📊 <b>Xena Breakdown:</b>\n"
+        f"• Style: <b>{style_label}</b>\n"
+        f"• Impact: <b>{impact}/10</b> | Novelty: <b>{novelty}/10</b> | Evidence: <b>{evidence}/10</b>\n\n"
+        f"🔍 <b>Verified Fact:</b>\n{safe_core}\n\n"
+        f"⚖️ <b>Framing & Rebuttal:</b>\n"
+        f"• <i>Source framing</i>: {safe_bias}\n"
+        f"• <i>Defense/Rebuttal</i>: {safe_counter}\n\n"
+        f"📌 <b>Source Quote:</b>\n<i>« {safe_quote} »</i></blockquote>"
     )
 
     inline_keyboard = {
         "inline_keyboard": [
             [
-                {"text": "🐦 VALIDER SUR X (1 CLIC)", "url": twitter_intent_url}
+                {"text": "🐦 POST ON X (1 CLICK)", "url": twitter_intent_url}
             ],
             [
-                {"text": "🔗 LIRE L'ARTICLE SOURCE", "url": item["url"]}
+                {"text": "🔗 READ ORIGINAL ARTICLE", "url": item["url"]}
             ],
             [
-                {"text": "✅ Tweeté / Validé", "callback_data": f"fb:ok:{item['id']}"},
-                {"text": "❌ Rejeter", "callback_data": f"fb:no:{item['id']}"}
+                {"text": "✅ Tweeted / Approved", "callback_data": f"fb:ok:{item['id']}"},
+                {"text": "❌ Reject", "callback_data": f"fb:no:{item['id']}"}
             ]
         ]
     }
@@ -143,7 +143,7 @@ def process_telegram_feedback(storage, offset: int = 0) -> int:
                 logger.info(f"Feedback enregistré : {art_id} -> {act_label}")
                 
                 ans_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery"
-                msg = "✅ Noté comme Tweeté sur X !" if action == "ok" else "❌ Noté comme Rejeté."
+                msg = "✅ Marked as Tweeted on X!" if action == "ok" else "❌ Marked as Rejected."
                 requests.post(ans_url, json={"callback_query_id": cb["id"], "text": msg}, timeout=3)
     except Exception as e:
         logger.debug(f"Erreur polling feedback: {e}")
