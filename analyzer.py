@@ -127,3 +127,38 @@ URL: {item['url']}
         except Exception as e:
             logger.error(f"Erreur lors de l'analyse Gemini de '{item['title']}': {e}")
             return None
+
+    def generate_tweet_reply(self, raw_tweet: str) -> Optional[str]:
+        if not self.client or not raw_tweet:
+            return None
+        try:
+            from google.genai import types
+            response = self.client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=raw_tweet.strip(),
+                config=types.GenerateContentConfig(
+                    system_instruction=GHOSTWRITER_PROMPT,
+                    temperature=0.3
+                )
+            )
+            text = response.text.strip()
+            if text.startswith('"') and text.endswith('"'):
+                text = text[1:-1].strip()
+            if len(text) > 280:
+                text = text[:277] + "..."
+            return text
+        except Exception as e:
+            logger.error(f"Erreur génération reply X: {e}")
+            return None
+
+GHOSTWRITER_PROMPT = """Tu es un ghostwriter expert sur X (Twitter) spécialisé en tech et politique.
+L'utilisateur te fournit le texte brut d'un tweet viral. Tu dois générer une réponse (reply) à ce tweet.
+
+Règles strictes :
+- Output : Uniquement le texte de la réponse. Aucune introduction ("Voici la réponse :"), aucun hashtag, aucun emoji.
+- Longueur : 280 caractères maximum. Court, percutant.
+- Angle (choisis l'un des deux selon le tweet) :
+  1. Vulgarisation : Identifie le concept le plus technique ou abstrait du tweet et explique-le avec une analogie extrêmement simple (niveau collège).
+  2. Contradiction/Perspective : Soulève une faille logique, un double standard ou ajoute une nuance historique factuelle (sans inventer de statistiques) qui vient compléter ou contredire le tweet.
+- Ton : Neutre, factuel, incisif. "Raw facts". Ne sois jamais dramatique ou commercial."""
+

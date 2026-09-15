@@ -120,34 +120,91 @@ def send_telegram_notification(item: Dict[str, Any], analysis: Dict[str, Any]) -
         logger.error(f"Exception envoi Telegram: {e}")
         return False
 
-def process_telegram_feedback(storage, offset: int = 0) -> int:
+def process_telegram_updates(storage, analyzer, offset: int = 0) -> int:
     if not TELEGRAM_BOT_TOKEN:
         return offset
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={offset}&timeout=1"
-        resp = requests.get(url, timeout=3).json()
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates?offset={offset}&timeout=2"
+        resp = requests.get(url, timeout=4).json()
         if not resp.get("ok"):
             return offset
             
         for update in resp.get("result", []):
             offset = max(offset, update["update_id"] + 1)
+            
+            # 1. Gestion des clics sur les boutons de feedback
             cb = update.get("callback_query")
-            if not cb:
+            if cb:
+                data = cb.get("data", "")
+                if data.startswith("fb:"):
+                    _, action, art_id = data.split(":", 2)
+                    act_label = "tweeted" if action == "ok" else "rejected"
+                    storage.log_feedback(art_id, act_label)
+                    logger.info(f"Feedback enregistré : {art_id} -> {act_label}")
+                    
+                    ans_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery"
+                    msg = "✅ Marked as Tweeted on X!" if action == "ok" else "❌ Marked as Rejected."
+                    requests.post(ans_url, json={"callback_query_id": cb["id"], "text": msg}, timeout=3)
                 continue
+
+            # 2. Gestion des messages textes entrants (Tweets à répondre)
+            msg = update.get("message")
+            if msg and msg.get("text"):
+                chat_id = msg["chat"]["id"]
+                text = msg["text"].strip()
                 
-            data = cb.get("data", "")
-            if data.startswith("fb:"):
-                _, action, art_id = data.split(":", 2)
-                act_label = "tweeted" if action == "ok" else "rejected"
-                storage.log_feedback(art_id, act_label)
-                logger.info(f"Feedback enregistré : {art_id} -> {act_label}")
+                # Sécurité : filtrer sur l'ID autorisé si spécifié
+                if TELEGRAM_CHAT_ID and str(chat_id) != str(TELEGRAM_CHAT_ID):
+                    logger.warning(f"Message reçu d'un chat non autorisé ({chat_id}) ignoré.")
+                    continue
                 
-                ans_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/answerCallbackQuery"
-                msg = "✅ Marked as Tweeted on X!" if action == "ok" else "❌ Marked as Rejected."
-                requests.post(ans_url, json={"callback_query_id": cb["id"], "text": msg}, timeout=3)
+                if text.startswith("/start"):
+                    welcome_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+                    requests.post(welcome_url, json={
+                        "chat_id": chat_id,
+                        "text": "👋 <b>Xena Ghostwriter</b> est prête. Envoie-moi le texte d'un tweet et je te génère une réponse affûtée.",
+                        "parse_mode": "HTML"
+                    }, timeout=3)
+                    continue
+                
+                logger.info(f"Tweet reçu pour ghostwriting ({len(text)} chars). Génération en cours...")
+                
+                # Signal visuel Telegram "en train d'écrire..."
+                action_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendChatAction"
+                requests.post(action_url, json={"chat_id": chat_id, "action": "typing"}, timeout=2)
+                
+                # Génération par Gemini
+                reply = analyzer.generate_tweet_reply(text)
+                if reply:
+                    encoded_reply = urllib.parse.quote(reply)
+                    twitter_reply_url = f"https://twitter.com/intent/tweet?text={encoded_reply}"
+                    
+                    send_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+                    payload = {
+                        "chat_id": chat_id,
+                        "text": f"✍️ <b>Suggested Reply:</b> <i>(tap to copy)</i>\n\n<code>{html.escape(reply)}</code>",
+                        "parse_mode": "HTML",
+                        "reply_markup": {
+                            "inline_keyboard": [
+                                [{"text": "🐦 POST REPLY ON X (1 CLICK)", "url": twitter_reply_url}]
+                            ]
+                        }
+                    }
+                    requests.post(send_url, json=payload, timeout=5)
+                    logger.info(f"Réponse ghostwriter envoyée ({len(reply)} caractères)")
+                else:
+                    err_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+                    requests.post(err_url, json={
+                        "chat_id": chat_id,
+                        "text": "⚠️ Erreur lors de la génération de la réponse.",
+                    }, timeout=3)
+
     except Exception as e:
-        logger.debug(f"Erreur polling feedback: {e}")
+        logger.debug(f"Erreur polling updates: {e}")
     return offset
+
+# Alias pour compatibilité
+process_telegram_feedback = process_telegram_updates
 
 def notify(item: Dict[str, Any], analysis: Dict[str, Any]):
     return send_telegram_notification(item, analysis)

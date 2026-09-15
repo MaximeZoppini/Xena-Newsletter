@@ -5,7 +5,7 @@ from config import DATABASE_PATH, POLL_INTERVAL_SECONDS, MIN_INTEREST_SCORE
 from storage import Storage
 from sources import get_all_new_candidates
 from analyzer import NewsAnalyzer
-from notifier import notify, process_telegram_feedback
+from notifier import notify, process_telegram_updates
 
 logging.basicConfig(
     level=logging.INFO,
@@ -76,16 +76,21 @@ def main():
         run_pipeline_cycle(storage, analyzer, dry_run=args.dry_run)
         return
 
-    logger.info(f"🚀 Xena en veille active TEMPS RÉEL (scan toutes les {POLL_INTERVAL_SECONDS}s, seuil ≥ {MIN_INTEREST_SCORE}/10).")
+    logger.info(f"🚀 Xena en veille active TEMPS RÉEL (scan flux toutes les {POLL_INTERVAL_SECONDS}s, Telegram polling toutes les 2s).")
     tg_offset = 0
+    last_pipeline_run = 0.0
     while True:
         try:
-            tg_offset = process_telegram_feedback(storage, tg_offset)
-            run_pipeline_cycle(storage, analyzer, dry_run=False)
+            tg_offset = process_telegram_updates(storage, analyzer, tg_offset)
+            now = time.time()
+            if now - last_pipeline_run >= POLL_INTERVAL_SECONDS:
+                run_pipeline_cycle(storage, analyzer, dry_run=False)
+                last_pipeline_run = now
         except Exception as e:
             logger.error(f"Erreur inattendue dans la boucle : {e}", exc_info=True)
             
-        time.sleep(POLL_INTERVAL_SECONDS)
+        time.sleep(2)
 
 if __name__ == "__main__":
     main()
+
