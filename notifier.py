@@ -33,12 +33,12 @@ def send_telegram_notification(item: Dict[str, Any], analysis: Dict[str, Any]) -
     style_key = analysis.get("chosen_style", "")
     style_label = STYLE_LABELS.get(style_key, style_key.capitalize())
 
-    safe_title = html.escape(item['title'])
+    safe_title = html.escape(item['title'][:80])
     safe_source = html.escape(item['source'])
-    safe_core = html.escape(analysis.get("factual_core", ""))
-    safe_bias = html.escape(analysis.get("framing_detected", ""))
-    safe_counter = html.escape(analysis.get("counter_view", "Non spécifié"))
-    safe_quote = html.escape(analysis.get("source_quote", ""))
+    safe_core = html.escape(analysis.get("factual_core", "")[:120])
+    safe_bias = html.escape(analysis.get("framing_detected", "")[:70])
+    safe_counter = html.escape(analysis.get("counter_view", "Non spécifié")[:80])
+    safe_quote = html.escape(analysis.get("source_quote", "")[:100])
     safe_tweet = html.escape(tweet_text)
 
     score_badge = "🔥 RÉVÉLATION MAJEURE" if score >= 8.8 else "⚡ IMPACT FACTUEL"
@@ -58,9 +58,6 @@ def send_telegram_notification(item: Dict[str, Any], analysis: Dict[str, Any]) -
         f"• <i>Réponse / Nuance</i> : {safe_counter}\n\n"
         f"📌 <b>Citation source :</b>\n<i>« {safe_quote} »</i></blockquote>"
     )
-
-    if len(caption_text) > 1020:
-        caption_text = caption_text[:1000] + "...</blockquote>"
 
     inline_keyboard = {
         "inline_keyboard": [
@@ -93,9 +90,12 @@ def send_telegram_notification(item: Dict[str, Any], analysis: Dict[str, Any]) -
                 "disable_notification": silent_mode
             }, files={"photo": f}, timeout=10)
             
-            if resp.json().get("ok"):
+            data = resp.json()
+            if data.get("ok"):
                 logger.info(f"Alerte envoyée pour : {item['title']} (Style: {style_label})")
                 return True
+            else:
+                logger.warning(f"Telegram sendPhoto refusé: {data.get('description')}")
     except Exception as e:
         logger.warning(f"Erreur envoi carte logo ({e}), repli sur message texte.")
 
@@ -111,7 +111,11 @@ def send_telegram_notification(item: Dict[str, Any], analysis: Dict[str, Any]) -
 
     try:
         resp = requests.post(text_url, json=payload, timeout=10)
-        return resp.json().get("ok", False)
+        data = resp.json()
+        if data.get("ok"):
+            return True
+        logger.error(f"Telegram sendMessage refusé: {data.get('description')}")
+        return False
     except Exception as e:
         logger.error(f"Exception envoi Telegram: {e}")
         return False
