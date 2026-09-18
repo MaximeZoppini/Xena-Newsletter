@@ -33,46 +33,72 @@ def send_telegram_notification(item: Dict[str, Any], analysis: Dict[str, Any]) -
     style_key = analysis.get("chosen_style", "")
     style_label = STYLE_LABELS.get(style_key, style_key.capitalize())
 
-    safe_title = html.escape(item['title'][:80])
+    safe_title = html.escape(item['title'][:75])
     safe_source = html.escape(item['source'])
-    safe_core = html.escape(analysis.get("factual_core", "")[:120])
-    safe_bias = html.escape(analysis.get("framing_detected", "")[:70])
-    safe_counter = html.escape(analysis.get("counter_view", "Unspecified")[:80])
-    safe_quote = html.escape(analysis.get("source_quote", "")[:100])
+    safe_core = html.escape(analysis.get("factual_core", "")[:100])
+    safe_bias = html.escape(analysis.get("framing_detected", "")[:60])
+    safe_counter = html.escape(analysis.get("counter_view", "Unspecified")[:70])
+    safe_quote = html.escape(analysis.get("source_quote", "")[:80])
     safe_tweet = html.escape(tweet_text)
+    article_url = item.get("url", "").strip()
+    safe_url = html.escape(article_url)
 
     score_badge = "🔥 MAJOR REVELATION" if score >= 8.8 else "⚡ FACTUAL IMPACT"
 
-    # Layout: Tweet on top ready to tap-to-copy, expandable deep-dive
+    # Layout optimisé pour l'algorithme X :
+    # Post 1 : Texte pur + Image (zéro lien dans le tweet pour reach max)
+    # Post 2 : Lien source posté en réponse au tweet
     caption_text = (
         f"{score_badge} (Score: <b>{score}/10</b>) • <i>{safe_source}</i>\n"
         f"📰 <b>{safe_title}</b>\n\n"
-        f"✍️ <b>Suggested Tweet:</b> <i>(tap to copy)</i>\n"
+        f"✍️ <b>Tweet 1 (Post principal) :</b> <i>(tap pour copier)</i>\n"
         f"<code>{safe_tweet}</code>\n\n"
+        f"🔗 <b>Tweet 2 (Lien en réponse) :</b> <i>(tap pour copier)</i>\n"
+        f"<code>{safe_url}</code>\n\n"
         f"<blockquote expandable>📊 <b>Xena Breakdown:</b>\n"
         f"• Style: <b>{style_label}</b>\n"
-        f"• Impact: <b>{impact}/10</b> | Novelty: <b>{novelty}/10</b> | Evidence: <b>{evidence}/10</b>\n\n"
-        f"🔍 <b>Verified Fact:</b>\n{safe_core}\n\n"
-        f"⚖️ <b>Framing & Rebuttal:</b>\n"
-        f"• <i>Source framing</i>: {safe_bias}\n"
-        f"• <i>Defense/Rebuttal</i>: {safe_counter}\n\n"
-        f"📌 <b>Source Quote:</b>\n<i>« {safe_quote} »</i></blockquote>"
+        f"• Impact: <b>{impact}/10</b> | Scoop: <b>{novelty}/10</b> | Preuves: <b>{evidence}/10</b>\n\n"
+        f"🔍 <b>Fait :</b> {safe_core}\n"
+        f"⚖️ <b>Angle :</b> {safe_bias}\n"
+        f"📌 <b>Citation :</b> <i>« {safe_quote} »</i></blockquote>"
     )
 
-    inline_keyboard = {
-        "inline_keyboard": [
-            [
-                {"text": "🐦 POST ON X (1 CLICK)", "url": twitter_intent_url}
-            ],
-            [
-                {"text": "🔗 READ ORIGINAL ARTICLE", "url": item["url"]}
-            ],
-            [
-                {"text": "✅ Tweeted / Approved", "callback_data": f"fb:ok:{item['id']}"},
-                {"text": "❌ Reject", "callback_data": f"fb:no:{item['id']}"}
-            ]
+    # Sécurité absolue : Telegram sendPhoto refuse les légendes > 1024 caractères.
+    if len(caption_text) > 980:
+        caption_text = (
+            f"{score_badge} (Score: <b>{score}/10</b>) • <i>{safe_source}</i>\n"
+            f"📰 <b>{safe_title}</b>\n\n"
+            f"✍️ <b>Tweet 1 (Post principal) :</b> <i>(tap pour copier)</i>\n"
+            f"<code>{safe_tweet}</code>\n\n"
+            f"🔗 <b>Tweet 2 (Lien en réponse) :</b> <i>(tap pour copier)</i>\n"
+            f"<code>{safe_url}</code>\n\n"
+            f"<blockquote expandable>📊 <b>Xena Breakdown:</b>\n"
+            f"🔍 <b>Fait :</b> {safe_core}\n"
+            f"📌 <b>Citation :</b> <i>« {safe_quote} »</i></blockquote>"
+        )
+
+    buttons = [
+        [
+            {"text": "🐦 Tweet 1 : Ouvrir X (1 clic)", "url": twitter_intent_url}
         ]
-    }
+    ]
+
+    # Bouton natif Telegram de copie directe dans le presse-papier
+    if article_url and len(article_url) <= 256:
+        buttons.append([
+            {"text": "📋 Copier le lien source (Tweet 2)", "copy_text": {"text": article_url}}
+        ])
+
+    buttons.append([
+        {"text": "🔗 Ouvrir l'article original", "url": article_url}
+    ])
+
+    buttons.append([
+        {"text": "✅ Tweeté / Validé", "callback_data": f"fb:ok:{item['id']}"},
+        {"text": "❌ Rejeter", "callback_data": f"fb:no:{item['id']}"}
+    ])
+
+    inline_keyboard = {"inline_keyboard": buttons}
 
     silent_mode = bool(score < 8.8)
 

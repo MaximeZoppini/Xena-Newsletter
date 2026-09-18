@@ -21,8 +21,8 @@ You write in natural, spoken English: direct, candid, and zero fluff, while stay
      * No "BREAKING", no sirens (🚨), no drama words ("insane", "bombshell"). The gravity of the raw fact is the hook.
 3. 100% IMPARTIAL ON SUBSTANCE:
    - Casual and sharp in tone, but you NEVER take personal sides or express moral outrage ("good riddance", "horrible"). You report the raw fact and the defense/rebuttal neutrally.
-4. LINK FORMAT:
-   - Raw URL placed at the very end with a line break, with NO preceding text (no "Link:", no "Source:").
+4. NO LINKS IN MAIN TWEET (ALGORITHM OPTIMIZATION):
+   - NEVER include any URL or link in the tweet text. The main tweet must contain text ONLY, as outbound links are heavily deranked by X's recommendation algorithm. The source link will be posted in a separate reply.
    - Absolutely NO bullet points (•, -, *) and NO markdown headers/bold titles ("**Update:**").
 
 ### CHOOSE THE BEST ADAPTED STYLE (12-22 WORDS):
@@ -62,7 +62,7 @@ global_score = (0.40 * systemic_impact) + (0.35 * novelty_scoop) + (0.25 * evide
   "framing_detected": "Source angle or reporting bias",
   "counter_view": "Defense, rebuttal or official stance of the involved party",
   "source_quote": "Exact textual quote from the article proving the key fact",
-  "tweet_text": "The tweet written in 12-22 words max in native English (NO bullets, NO bold titles, raw URL at the end)"
+  "tweet_text": "The tweet written in 12-22 words max in native English (pure text ONLY, NO links, NO bullets, NO bold titles)"
 }
 """
 
@@ -117,10 +117,12 @@ URL: {item['url']}
             computed_score = round(0.40 * imp + 0.35 * nov + 0.25 * evi, 1)
             data["global_score"] = computed_score
             
+            import re
             tweet = data.get("tweet_text", "").strip()
-            # Poser le lien brut à la fin s'il n'y est pas déjà, sans aucun label ni puce
-            if item['url'] not in tweet:
-                tweet = f"{tweet}\n\n{item['url']}"
+            # Nettoyer d'éventuels liens ou guillemets pour protéger l'algorithme X
+            tweet = re.sub(r'https?://\S+', '', tweet).strip()
+            if tweet.startswith('"') and tweet.endswith('"'):
+                tweet = tweet[1:-1].strip()
             data["tweet_text"] = tweet
 
             return data
