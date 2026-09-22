@@ -66,10 +66,13 @@ global_score = (0.40 * systemic_impact) + (0.35 * novelty_scoop) + (0.25 * evide
 }
 """
 
+from typesafe_evaluator import TypeSafeEvaluator
+
 class NewsAnalyzer:
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or GEMINI_API_KEY
         self.client = None
+        self.typesafe = TypeSafeEvaluator()
         if self.api_key:
             try:
                 from google import genai
@@ -78,14 +81,46 @@ class NewsAnalyzer:
                 logger.error(f"Error initializing Google GenAI Client: {e}")
 
     def analyze(self, item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        # ----------------------------------------------------
+        # ÉTAGE 1 : Filtrage rapide & impartialité par TypeSafe AI (Jev)
+        # ----------------------------------------------------
+        jev_eval = None
+        if self.typesafe and self.typesafe.is_available():
+            jev_eval = self.typesafe.evaluate(item)
+            if not jev_eval.get("should_analyze", True):
+                logger.info(f"🛑 [JEV STAGE 1] Rejeté : '{item['title'][:50]}...' -> {jev_eval.get('reason')}")
+                return {
+                    "global_score": jev_eval.get("estimated_score", 0.0),
+                    "novelty_scoop": 0,
+                    "systemic_impact": 0,
+                    "evidence_quality": 0,
+                    "rejection_reason": f"TypeSafe Jev: {jev_eval.get('reason')}",
+                    "factual_core": "",
+                    "framing_detected": "",
+                    "counter_view": "",
+                    "source_quote": "",
+                    "tweet_text": "",
+                    "target_domain": "",
+                    "chosen_style": "",
+                    "jev_data": jev_eval
+                }
+            logger.info(f"⚡ [JEV STAGE 1] Validé : '{item['title'][:50]}...' (Score est. {jev_eval.get('estimated_score')}/10, Scoop prob: {jev_eval.get('p_scoop'):.2f})")
+
+        # ----------------------------------------------------
+        # ÉTAGE 2 : Analyse approfondie, extraction & rédaction (Gemini)
+        # ----------------------------------------------------
         if not self.client:
             return None
+
+        jev_context = ""
+        if jev_eval and jev_eval.get("p_scoop") is not None:
+            jev_context = f"TYPESAFE JEV PRE-EVALUATION: Scoop Probability={jev_eval.get('p_scoop'):.2f}, Systemic Score={jev_eval.get('systemic_score')}/10\n"
 
         user_content = f"""
 SOURCE: {item['source']} (Editorial Context: {item.get('known_bias', 'Unspecified')})
 TITLE: {item['title']}
 URL: {item['url']}
-
+{jev_context}
 <untrusted_source_content>
 {item.get('summary', '')}
 </untrusted_source_content>
@@ -124,6 +159,7 @@ URL: {item['url']}
             if tweet.startswith('"') and tweet.endswith('"'):
                 tweet = tweet[1:-1].strip()
             data["tweet_text"] = tweet
+            data["jev_data"] = jev_eval
 
             return data
         except Exception as e:
