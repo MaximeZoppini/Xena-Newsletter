@@ -23,6 +23,10 @@ POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "60"))
 # Seuil d'admissibilité éditoriale (Faable recommande ≥ 7.5 pour attraper les vraies enquêtes de fond)
 MIN_INTEREST_SCORE = float(os.getenv("MIN_INTEREST_SCORE", "7.5"))
 
+# Publication quotidienne (12h00 par défaut = tous les midis)
+PUBLISH_HOUR = int(os.getenv("PUBLISH_HOUR", "12"))
+PUBLISH_MINUTE = int(os.getenv("PUBLISH_MINUTE", "0"))
+
 # Flux d'investigation et tech surveillés
 FEEDS = [
     {

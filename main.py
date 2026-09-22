@@ -1,7 +1,8 @@
 import time
+import datetime
 import argparse
 import logging
-from config import DATABASE_PATH, POLL_INTERVAL_SECONDS, MIN_INTEREST_SCORE
+from config import DATABASE_PATH, POLL_INTERVAL_SECONDS, MIN_INTEREST_SCORE, PUBLISH_HOUR, PUBLISH_MINUTE
 from storage import Storage
 from sources import get_all_new_candidates
 from analyzer import NewsAnalyzer
@@ -14,13 +15,16 @@ logging.basicConfig(
 logger = logging.getLogger("main")
 
 def run_pipeline_cycle(storage: Storage, analyzer: NewsAnalyzer, dry_run: bool = False):
+    """
+    Veille continue : récupère tous les nouveaux flux, les fait analyser par Gemini
+    et les archive en base de données sans envoyer de notification immédiate.
+    """
     candidates = get_all_new_candidates(storage)
     if not candidates:
         return
 
-    logger.info(f"⚡ [TEMPS RÉEL] {len(candidates)} nouvelle(s) publication(s) détectée(s) !")
+    logger.info(f"⚡ [VEILLE] {len(candidates)} nouvelle(s) publication(s) détectée(s) !")
 
-    qualified_count = 0
     for item in candidates:
         if not dry_run:
             storage.save_article(item)
@@ -35,33 +39,65 @@ def run_pipeline_cycle(storage: Storage, analyzer: NewsAnalyzer, dry_run: bool =
         if not dry_run:
             storage.save_analysis(item["id"], analysis)
             
-        # Seuil d'éligibilité : Score global >= MIN_INTEREST_SCORE (7.5) ET Nouveauté >= 7
-        if score >= MIN_INTEREST_SCORE and novelty >= 7:
-            logger.info(f"🎯 RETENU : '{item['title'][:60]}...' (Score {score}/10, Nouveauté {novelty}/10)")
-            qualified_count += 1
-            
-            if not dry_run:
-                success = notify(item, analysis)
-                if success:
-                    storage.mark_published(item["id"])
-                    time.sleep(1.5)
-            else:
-                print("\n" + "="*60)
-                print(f"[DRY-RUN RETENU] Score {score}/10 (Nouveauté: {novelty}/10)")
-                print(f"Source : {item['source']}")
-                print(f"Titre  : {item['title']}")
-                print(f"Fait   : {analysis.get('factual_core')}")
-                print(f"Tweet  :\n{analysis.get('tweet_text')}")
-                print("="*60 + "\n")
+        if dry_run:
+            print(f"[DRY-RUN] '{item['title'][:50]}...' -> Score {score}/10 (Scoop {novelty}/10)")
         else:
-            reason = analysis.get("rejection_reason") or "Score insuffisant"
-            logger.info(f"❌ Rejeté ({score}/10) : '{item['title'][:50]}...' -> {reason}")
+            logger.info(f"📥 [ARCHIVÉ EN DB] '{item['title'][:50]}...' -> Score {score}/10 (Scoop {novelty}/10)")
+
+def check_and_publish_daily_best(storage: Storage, force: bool = False, dry_run: bool = False) -> bool:
+    """
+    À 12h00 chaque jour, sélectionne le meilleur article parmi ceux archivés et publie un unique post sur Telegram.
+    """
+    now = datetime.datetime.now()
+    today_str = now.strftime("%Y-%m-%d")
+    last_post_date = storage.get_state("last_daily_post_date")
+
+    if not force:
+        # On ne publie qu'à partir de l'heure programmée (12h par défaut)
+        if now.hour < PUBLISH_HOUR:
+            return False
+        # Un seul post par jour : si déjà publié aujourd'hui, on passe
+        if last_post_date == today_str:
+            return False
+
+    logger.info(f"🏆 [DAILY DISPATCH] Recherche du meilleur scoop du jour (seuil >= {MIN_INTEREST_SCORE})...")
+    candidate = storage.get_daily_best_candidate(min_score=MIN_INTEREST_SCORE, max_age_hours=36)
+    if not candidate:
+        logger.info("ℹ️ [DAILY DISPATCH] Aucun article marquant trouvé pour aujourd'hui.")
+        if not dry_run and not force:
+            storage.set_state("last_daily_post_date", today_str)
+        return False
+
+    item, analysis = candidate
+    score = analysis.get("global_score", 0.0)
+    logger.info(f"🌟 [DAILY SELECTION RETENU] '{item['title']}' (Score: {score}/10)")
+
+    if dry_run:
+        print("\n" + "="*60)
+        print(f"[DRY-RUN DAILY BEST] Score {score}/10")
+        print(f"Source : {item['source']}")
+        print(f"Titre  : {item['title']}")
+        print(f"Fait   : {analysis.get('factual_core')}")
+        print(f"Tweet  :\n{analysis.get('tweet_text')}")
+        print("="*60 + "\n")
+        return True
+
+    success = notify(item, analysis)
+    if success:
+        storage.mark_published(item["id"])
+        storage.set_state("last_daily_post_date", today_str)
+        logger.info(f"✅ [POST DU MIDI] Scoop quotidien de 12h00 envoyé avec succès sur Telegram !")
+        return True
+    else:
+        logger.error(f"❌ [POST DU MIDI] Échec lors de l'envoi Telegram du post quotidien.")
+        return False
 
 def main():
-    parser = argparse.ArgumentParser(description="Xena : IA d'investigation en temps réel")
+    parser = argparse.ArgumentParser(description="Xena : IA d'investigation et curation quotidienne")
     parser.add_argument("--test-sources", action="store_true", help="Teste l'ingestion des flux")
     parser.add_argument("--dry-run", action="store_true", help="Exécute un cycle sans envoyer de notification")
     parser.add_argument("--once", action="store_true", help="Exécute un seul cycle puis quitte")
+    parser.add_argument("--publish-now", action="store_true", help="Publie immédiatement le meilleur article du jour sur Telegram")
     args = parser.parse_args()
 
     storage = Storage(DATABASE_PATH)
@@ -72,16 +108,27 @@ def main():
         print(f"Trouvé {len(candidates)} items bruts.")
         return
 
-    if args.dry_run or args.once:
-        run_pipeline_cycle(storage, analyzer, dry_run=args.dry_run)
+    if args.publish_now:
+        check_and_publish_daily_best(storage, force=True, dry_run=False)
         return
 
-    logger.info(f"🚀 Xena en veille active TEMPS RÉEL (scan flux toutes les {POLL_INTERVAL_SECONDS}s, Telegram polling toutes les 2s).")
+    if args.dry_run or args.once:
+        run_pipeline_cycle(storage, analyzer, dry_run=args.dry_run)
+        check_and_publish_daily_best(storage, force=True, dry_run=args.dry_run)
+        return
+
+    logger.info(f"🚀 Xena active : Veille continue (toutes les {POLL_INTERVAL_SECONDS}s), Post quotidien à {PUBLISH_HOUR}h00, Telegram polling 2s.")
     tg_offset = 0
     last_pipeline_run = 0.0
     while True:
         try:
+            # 1. Écoute Telegram en continu (Ghostwriter tweet replies & feedback)
             tg_offset = process_telegram_updates(storage, analyzer, tg_offset)
+
+            # 2. Vérification de l'heure du post quotidien (12h00)
+            check_and_publish_daily_best(storage)
+
+            # 3. Cycle de veille et archivage en DB
             now = time.time()
             if now - last_pipeline_run >= POLL_INTERVAL_SECONDS:
                 run_pipeline_cycle(storage, analyzer, dry_run=False)
@@ -93,4 +140,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
