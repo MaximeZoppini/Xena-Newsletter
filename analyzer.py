@@ -69,9 +69,10 @@ global_score = (0.40 * systemic_impact) + (0.35 * novelty_scoop) + (0.25 * evide
 from typesafe_evaluator import TypeSafeEvaluator
 
 class NewsAnalyzer:
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, storage: Optional[Any] = None):
         self.api_key = api_key or GEMINI_API_KEY
         self.client = None
+        self.storage = storage
         self.typesafe = TypeSafeEvaluator()
         if self.api_key:
             try:
@@ -89,6 +90,41 @@ class NewsAnalyzer:
             jev_eval = self.typesafe.evaluate(item)
             if not jev_eval.get("should_analyze", True):
                 logger.info(f"🛑 [JEV STAGE 1] Rejeté : '{item['title'][:50]}...' -> {jev_eval.get('reason')}")
+                
+                # Calcul de coût et économie réalisée
+                jev_in = jev_eval.get("tokens_in", 400)
+                jev_cost = jev_in * 0.000000042
+                hypo_gemini_cost = (850 * 0.000000075) + (300 * 0.000000300)  # ~$0.0001538
+                savings = hypo_gemini_cost - jev_cost
+
+                if self.storage:
+                    try:
+                        self.storage.log_hybrid_eval({
+                            "article_id": item["id"],
+                            "title": item["title"],
+                            "source": item["source"],
+                            "url": item.get("url", ""),
+                            "jev_latency_ms": jev_eval.get("latency_ms", 0),
+                            "jev_p_scoop": jev_eval.get("p_scoop", 0.0),
+                            "jev_p_opinion": jev_eval.get("p_opinion", 0.0),
+                            "jev_systemic_score": jev_eval.get("systemic_score", 0.0),
+                            "jev_decision": "REJECTED",
+                            "jev_reason": jev_eval.get("reason", ""),
+                            "jev_tokens_in": jev_in,
+                            "jev_tokens_out": jev_eval.get("tokens_out", 0),
+                            "gemini_called": 0,
+                            "gemini_latency_ms": 0,
+                            "gemini_tokens_in": 0,
+                            "gemini_tokens_out": 0,
+                            "gemini_score": 0.0,
+                            "gemini_tweet": "",
+                            "cost_without_jev": hypo_gemini_cost,
+                            "cost_hybrid": jev_cost,
+                            "savings": savings
+                        })
+                    except Exception as err:
+                        logger.debug(f"Erreur logging télémétrie: {err}")
+
                 return {
                     "global_score": jev_eval.get("estimated_score", 0.0),
                     "novelty_scoop": 0,
@@ -125,6 +161,8 @@ URL: {item['url']}
 {item.get('summary', '')}
 </untrusted_source_content>
 """
+        import time
+        t_gem_start = time.perf_counter()
         try:
             from google.genai import types
             response = self.client.models.generate_content(
@@ -136,6 +174,8 @@ URL: {item['url']}
                     temperature=0.2
                 )
             )
+            gemini_latency_ms = int((time.perf_counter() - t_gem_start) * 1000)
+
             raw_text = response.text.strip()
             if raw_text.startswith("```json"):
                 raw_text = raw_text[7:]
@@ -154,12 +194,51 @@ URL: {item['url']}
             
             import re
             tweet = data.get("tweet_text", "").strip()
-            # Nettoyer d'éventuels liens ou guillemets pour protéger l'algorithme X
             tweet = re.sub(r'https?://\S+', '', tweet).strip()
             if tweet.startswith('"') and tweet.endswith('"'):
                 tweet = tweet[1:-1].strip()
             data["tweet_text"] = tweet
             data["jev_data"] = jev_eval
+
+            # Métriques de tokens et coûts pour Gemini
+            meta = getattr(response, "usage_metadata", None)
+            gem_in = getattr(meta, "prompt_token_count", 850) if meta else 850
+            gem_out = getattr(meta, "candidates_token_count", 300) if meta else 300
+            
+            gemini_cost = (gem_in * 0.000000075) + (gem_out * 0.000000300)
+            jev_in = jev_eval.get("tokens_in", 400) if jev_eval else 0
+            jev_cost = jev_in * 0.000000042
+            cost_hybrid = jev_cost + gemini_cost
+            cost_without_jev = gemini_cost
+            savings = cost_without_jev - cost_hybrid
+
+            if self.storage:
+                try:
+                    self.storage.log_hybrid_eval({
+                        "article_id": item["id"],
+                        "title": item["title"],
+                        "source": item["source"],
+                        "url": item.get("url", ""),
+                        "jev_latency_ms": jev_eval.get("latency_ms", 0) if jev_eval else 0,
+                        "jev_p_scoop": jev_eval.get("p_scoop", 0.0) if jev_eval else 0.0,
+                        "jev_p_opinion": jev_eval.get("p_opinion", 0.0) if jev_eval else 0.0,
+                        "jev_systemic_score": jev_eval.get("systemic_score", 0.0) if jev_eval else 0.0,
+                        "jev_decision": "QUALIFIED",
+                        "jev_reason": jev_eval.get("reason", "Validé par Jev") if jev_eval else "Bypass Jev",
+                        "jev_tokens_in": jev_in,
+                        "jev_tokens_out": jev_eval.get("tokens_out", 0) if jev_eval else 0,
+                        "gemini_called": 1,
+                        "gemini_latency_ms": gemini_latency_ms,
+                        "gemini_tokens_in": gem_in,
+                        "gemini_tokens_out": gem_out,
+                        "gemini_score": computed_score,
+                        "gemini_tweet": tweet,
+                        "cost_without_jev": cost_without_jev,
+                        "cost_hybrid": cost_hybrid,
+                        "savings": savings
+                    })
+                except Exception as err:
+                    logger.debug(f"Erreur logging télémétrie Gemini: {err}")
 
             return data
         except Exception as e:

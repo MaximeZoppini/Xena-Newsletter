@@ -54,6 +54,8 @@ class TypeSafeEvaluator:
             }
         }
 
+        import time
+        t0 = time.perf_counter()
         try:
             resp = requests.post(
                 self.endpoint,
@@ -64,12 +66,23 @@ class TypeSafeEvaluator:
                 json=payload,
                 timeout=5
             )
+            latency_ms = int((time.perf_counter() - t0) * 1000)
+
             if resp.status_code != 200:
                 logger.warning(f"TypeSafe API returned {resp.status_code}: {resp.text[:150]}")
-                return {"should_analyze": True, "reason": f"Erreur API Jev ({resp.status_code}) -> fallback Gemini"}
+                return {
+                    "should_analyze": True,
+                    "reason": f"Erreur API Jev ({resp.status_code}) -> fallback Gemini",
+                    "latency_ms": latency_ms,
+                    "tokens_in": 0,
+                    "tokens_out": 0
+                }
 
             data = resp.json()
             answers = data.get("answers", {})
+            usage = data.get("usage", {})
+            tokens_in = usage.get("input_tokens", 400)
+            tokens_out = usage.get("output_tokens", 40)
 
             p_scoop = answers.get("is_investigation_or_scoop", {}).get("noul", 0.5)
             p_opinion = answers.get("is_opinion_or_pr", {}).get("noul", 0.0)
@@ -80,26 +93,34 @@ class TypeSafeEvaluator:
             scaled_score = round(raw_score * 2.5, 1)
 
             # Règle de filtrage Stage 1 :
-            # 1. Si opinion/PR pure > 0.65 -> Rejet
-            if p_opinion > 0.65:
+            # 1. Si opinion/PR pure > 0.45 -> Rejet
+            if p_opinion > 0.45:
                 return {
                     "should_analyze": False,
                     "estimated_score": scaled_score,
                     "reason": f"Opinion partisane ou promotionnelle (prob: {p_opinion:.2f})",
                     "p_scoop": p_scoop,
                     "p_opinion": p_opinion,
-                    "systemic_score": scaled_score
+                    "systemic_score": scaled_score,
+                    "latency_ms": latency_ms,
+                    "tokens_in": tokens_in,
+                    "tokens_out": tokens_out,
+                    "raw_answers": answers
                 }
 
-            # 2. Si quasi-nul en scoop (< 0.20) et impact insignifiant (<= 1.0 / 4) -> Rejet
-            if p_scoop < 0.20 and raw_score <= 1.0:
+            # 2. Si faible en scoop (< 0.35) et impact faible à modéré (< 6.0 / 10) -> Rejet
+            if p_scoop < 0.35 and scaled_score < 6.0:
                 return {
                     "should_analyze": False,
                     "estimated_score": scaled_score,
                     "reason": f"Sujet mineur ou non-investigatif (scoop prob: {p_scoop:.2f}, impact: {scaled_score}/10)",
                     "p_scoop": p_scoop,
                     "p_opinion": p_opinion,
-                    "systemic_score": scaled_score
+                    "systemic_score": scaled_score,
+                    "latency_ms": latency_ms,
+                    "tokens_in": tokens_in,
+                    "tokens_out": tokens_out,
+                    "raw_answers": answers
                 }
 
             # Candidat qualifié pour l'Étage 2 (Gemini)
@@ -109,9 +130,20 @@ class TypeSafeEvaluator:
                 "reason": "Validé par TypeSafe Jev",
                 "p_scoop": p_scoop,
                 "p_opinion": p_opinion,
-                "systemic_score": scaled_score
+                "systemic_score": scaled_score,
+                "latency_ms": latency_ms,
+                "tokens_in": tokens_in,
+                "tokens_out": tokens_out,
+                "raw_answers": answers
             }
 
         except Exception as e:
+            latency_ms = int((time.perf_counter() - t0) * 1000)
             logger.warning(f"Exception lors de l'appel TypeSafe Jev ({e}), repli automatique sur Gemini.")
-            return {"should_analyze": True, "reason": f"Exception Jev ({e}) -> fallback Gemini"}
+            return {
+                "should_analyze": True,
+                "reason": f"Exception Jev ({e}) -> fallback Gemini",
+                "latency_ms": latency_ms,
+                "tokens_in": 0,
+                "tokens_out": 0
+            }

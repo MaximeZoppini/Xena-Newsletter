@@ -92,6 +92,8 @@ def check_and_publish_daily_best(storage: Storage, force: bool = False, dry_run:
         logger.error(f"❌ [POST DU MIDI] Échec lors de l'envoi Telegram du post quotidien.")
         return False
 
+from dashboard import start_dashboard_server
+
 def main():
     parser = argparse.ArgumentParser(description="Xena : IA d'investigation et curation quotidienne")
     parser.add_argument("--test-sources", action="store_true", help="Teste l'ingestion des flux")
@@ -101,7 +103,7 @@ def main():
     args = parser.parse_args()
 
     storage = Storage(DATABASE_PATH)
-    analyzer = NewsAnalyzer()
+    analyzer = NewsAnalyzer(storage=storage)
 
     if args.test_sources:
         candidates = get_all_new_candidates(storage)
@@ -117,7 +119,13 @@ def main():
         check_and_publish_daily_best(storage, force=True, dry_run=args.dry_run)
         return
 
-    logger.info(f"🚀 Xena active : Veille continue (toutes les {POLL_INTERVAL_SECONDS}s), Post quotidien à {PUBLISH_HOUR}h00, Telegram polling 2s.")
+    # Démarrage du serveur web de télémétrie hybride (Port 8080)
+    try:
+        start_dashboard_server(storage, host="0.0.0.0", port=8080)
+    except Exception as e:
+        logger.warning(f"Impossible de démarrer le dashboard web : {e}")
+
+    logger.info(f"🚀 Xena active : Veille continue (toutes les {POLL_INTERVAL_SECONDS}s), Post quotidien à {PUBLISH_HOUR}h00, Dashboard http://0.0.0.0:8080, Telegram polling 2s.")
     tg_offset = 0
     last_pipeline_run = 0.0
     while True:

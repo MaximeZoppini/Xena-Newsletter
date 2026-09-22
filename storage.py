@@ -65,6 +65,34 @@ class Storage:
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            # Table de télémétrie hybride (suivi en direct des coûts, temps et réponses Jev vs Gemini)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS hybrid_eval_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    article_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    url TEXT,
+                    jev_latency_ms INTEGER DEFAULT 0,
+                    jev_p_scoop REAL DEFAULT 0.0,
+                    jev_p_opinion REAL DEFAULT 0.0,
+                    jev_systemic_score REAL DEFAULT 0.0,
+                    jev_decision TEXT NOT NULL, -- 'QUALIFIED' ou 'REJECTED'
+                    jev_reason TEXT,
+                    jev_tokens_in INTEGER DEFAULT 0,
+                    jev_tokens_out INTEGER DEFAULT 0,
+                    gemini_called INTEGER DEFAULT 0,
+                    gemini_latency_ms INTEGER DEFAULT 0,
+                    gemini_tokens_in INTEGER DEFAULT 0,
+                    gemini_tokens_out INTEGER DEFAULT 0,
+                    gemini_score REAL DEFAULT 0.0,
+                    gemini_tweet TEXT DEFAULT '',
+                    cost_without_jev REAL DEFAULT 0.0,
+                    cost_hybrid REAL DEFAULT 0.0,
+                    savings REAL DEFAULT 0.0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             conn.commit()
 
             # Migrations douces pour les colonnes supplémentaires
@@ -240,4 +268,106 @@ class Storage:
             cur = conn.cursor()
             cur.execute("SELECT action, COUNT(*) as count FROM editorial_feedback GROUP BY action")
             return {row["action"]: row["count"] for row in cur.fetchall()}
+
+    def log_hybrid_eval(self, data: Dict[str, Any]):
+        with self._get_connection() as conn:
+            conn.execute("""
+                INSERT INTO hybrid_eval_logs (
+                    article_id, title, source, url,
+                    jev_latency_ms, jev_p_scoop, jev_p_opinion, jev_systemic_score,
+                    jev_decision, jev_reason, jev_tokens_in, jev_tokens_out,
+                    gemini_called, gemini_latency_ms, gemini_tokens_in, gemini_tokens_out,
+                    gemini_score, gemini_tweet, cost_without_jev, cost_hybrid, savings
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                data.get("article_id", ""),
+                data.get("title", ""),
+                data.get("source", ""),
+                data.get("url", ""),
+                data.get("jev_latency_ms", 0),
+                data.get("jev_p_scoop", 0.0),
+                data.get("jev_p_opinion", 0.0),
+                data.get("jev_systemic_score", 0.0),
+                data.get("jev_decision", "REJECTED"),
+                data.get("jev_reason", ""),
+                data.get("jev_tokens_in", 0),
+                data.get("jev_tokens_out", 0),
+                1 if data.get("gemini_called") else 0,
+                data.get("gemini_latency_ms", 0),
+                data.get("gemini_tokens_in", 0),
+                data.get("gemini_tokens_out", 0),
+                data.get("gemini_score", 0.0),
+                data.get("gemini_tweet", ""),
+                data.get("cost_without_jev", 0.0),
+                data.get("cost_hybrid", 0.0),
+                data.get("savings", 0.0)
+            ))
+            conn.commit()
+
+    def get_hybrid_stats(self) -> Dict[str, Any]:
+        with self._get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT 
+                    COUNT(*) as total_count,
+                    SUM(CASE WHEN jev_decision = 'REJECTED' THEN 1 ELSE 0 END) as rejected_count,
+                    SUM(CASE WHEN jev_decision = 'QUALIFIED' THEN 1 ELSE 0 END) as qualified_count,
+                    AVG(jev_latency_ms) as avg_jev_latency,
+                    AVG(CASE WHEN gemini_called = 1 THEN gemini_latency_ms ELSE NULL END) as avg_gemini_latency,
+                    SUM(cost_without_jev) as total_cost_without_jev,
+                    SUM(cost_hybrid) as total_cost_hybrid,
+                    SUM(savings) as total_savings
+                FROM hybrid_eval_logs
+            """)
+            row = cur.fetchone()
+            if not row or not row["total_count"]:
+                return {
+                    "total_count": 0,
+                    "rejected_count": 0,
+                    "qualified_count": 0,
+                    "filter_rate_pct": 0.0,
+                    "avg_jev_latency_ms": 0,
+                    "avg_gemini_latency_ms": 0,
+                    "speedup_factor": 1.0,
+                    "total_cost_without_jev": 0.0,
+                    "total_cost_hybrid": 0.0,
+                    "total_savings": 0.0,
+                    "savings_pct": 0.0
+                }
+
+            total = row["total_count"]
+            rej = row["rejected_count"] or 0
+            qual = row["qualified_count"] or 0
+            filter_rate = round((rej / total) * 100, 1) if total > 0 else 0.0
+            avg_jev = round(row["avg_jev_latency"] or 0)
+            avg_gemini = round(row["avg_gemini_latency"] or 0)
+            speedup = round(avg_gemini / avg_jev, 1) if avg_jev > 0 and avg_gemini > 0 else 1.0
+
+            c_without = round(row["total_cost_without_jev"] or 0.0, 5)
+            c_hybrid = round(row["total_cost_hybrid"] or 0.0, 5)
+            savings = round(row["total_savings"] or 0.0, 5)
+            savings_pct = round((savings / c_without) * 100, 1) if c_without > 0 else 0.0
+
+            return {
+                "total_count": total,
+                "rejected_count": rej,
+                "qualified_count": qual,
+                "filter_rate_pct": filter_rate,
+                "avg_jev_latency_ms": avg_jev,
+                "avg_gemini_latency_ms": avg_gemini,
+                "speedup_factor": speedup,
+                "total_cost_without_jev": c_without,
+                "total_cost_hybrid": c_hybrid,
+                "total_savings": savings,
+                "savings_pct": savings_pct
+            }
+
+    def get_hybrid_logs(self, limit: int = 50) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT * FROM hybrid_eval_logs ORDER BY id DESC LIMIT ?
+            """, (limit,))
+            return [dict(row) for row in cur.fetchall()]
+
 

@@ -1,0 +1,186 @@
+[
+  {
+    "id": "SgFjEeUQaomGREZR",
+    "name": "Xena - Tweet Reply Ghostwriter",
+    "active": false,
+    "nodes": [
+      {
+        "parameters": {
+          "updates": [
+            "message"
+          ],
+          "additionalFields": {}
+        },
+        "id": "11fff00d-486a-4917-9233-23a396bccfed",
+        "name": "Telegram Trigger",
+        "type": "n8n-nodes-base.telegramTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          0
+        ],
+        "webhookId": "d379996e-2199-448a-8433-565a1be66238",
+        "credentials": {
+          "telegramApi": {
+            "id": "PXmZQqgbJGfwHrSU",
+            "name": "Telegram account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "rules": {
+            "values": [
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict"
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.message.text }}",
+                      "rightValue": "",
+                      "operator": {
+                        "type": "string",
+                        "operation": "notEmpty"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                }
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "router-text-filter",
+        "name": "Switch: Is Valid Text?",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.2,
+        "position": [
+          260,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "promptType": "define",
+          "text": "={{ $json.message.text }}",
+          "hasOutputParser": false,
+          "messages": {
+            "messageValues": [
+              {
+                "type": "system",
+                "message": "Tu es un ghostwriter expert sur X (Twitter) spécialisé en tech et politique.\nL'utilisateur te fournit le texte brut d'un tweet viral. Tu dois générer une réponse (reply) à ce tweet.\n\nRègles strictes :\n- Output : Uniquement le texte de la réponse. Aucune introduction (\"Voici la réponse :\"), aucun hashtag, aucun emoji.\n- Longueur : 280 caractères maximum. Court, percutant.\n- Angle (choisis l'un des deux selon le tweet) :\n  1. Vulgarisation : Identifie le concept le plus technique ou abstrait du tweet et explique-le avec une analogie extrêmement simple (niveau collège).\n  2. Contradiction/Perspective : Soulève une faille logique, un double standard ou ajoute une nuance historique factuelle (sans inventer de statistiques) qui vient compléter ou contredire le tweet.\n- Ton : Neutre, factuel, incisif. \"Raw facts\". Ne sois jamais dramatique ou commercial."
+              }
+            ]
+          }
+        },
+        "id": "basic-llm-chain",
+        "name": "Basic LLM Chain",
+        "type": "@n8n/n8n-nodes-langchain.chainLlm",
+        "typeVersion": 1.5,
+        "position": [
+          520,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "modelName": "models/gemini-3.6-flash",
+          "options": {
+            "temperature": 0.3
+          }
+        },
+        "id": "gemini-chat-model",
+        "name": "Google Gemini Chat Model",
+        "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+        "typeVersion": 1,
+        "position": [
+          520,
+          200
+        ],
+        "credentials": {
+          "googlePalmApi": {
+            "id": "gemini-api-cred",
+            "name": "Google Gemini API"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+          "text": "=<code>{{ $json.text.trim() }}</code>",
+          "additionalFields": {
+            "parse_mode": "HTML"
+          }
+        },
+        "id": "telegram-send-reply",
+        "name": "Telegram: Send Reply",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          800,
+          0
+        ],
+        "credentials": {
+          "telegramApi": {
+            "id": "PXmZQqgbJGfwHrSU",
+            "name": "Telegram account"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Telegram Trigger": {
+        "main": [
+          [
+            {
+              "node": "Switch: Is Valid Text?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Switch: Is Valid Text?": {
+        "main": [
+          [
+            {
+              "node": "Basic LLM Chain",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Google Gemini Chat Model": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "Basic LLM Chain",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Basic LLM Chain": {
+        "main": [
+          [
+            {
+              "node": "Telegram: Send Reply",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1"
+    }
+  }
+]
