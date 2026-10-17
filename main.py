@@ -43,7 +43,9 @@ def run_pipeline_cycle(storage: Storage, analyzer: NewsAnalyzer, briefer: Briefe
         storage.save_analysis(item["id"], analysis)
         logger.info(f"📥 '{item['title'][:50]}...' -> {score}/10")
         if score >= MIN_INTEREST_SCORE:
+            # Fiche + version audio courte prêtes d'avance : le flash « Ce que j'ai raté » démarre sans attente
             briefer.get_or_create_brief(item["id"])
+            briefer.get_or_create_short_audio(item["id"])
 
 
 def main():
@@ -51,7 +53,7 @@ def main():
     parser.add_argument("--test-sources", action="store_true", help="Teste l'ingestion des flux")
     parser.add_argument("--dry-run", action="store_true", help="Exécute un cycle sans rien enregistrer")
     parser.add_argument("--backfill-days", type=int, metavar="N",
-                        help="Prépare les fiches des news importantes des N derniers jours puis quitte")
+                        help="Prépare fiches et versions audio courtes des news importantes des N derniers jours puis quitte")
     parser.add_argument("--once", action="store_true", help="Exécute un seul cycle puis quitte")
     args = parser.parse_args()
 
@@ -67,10 +69,11 @@ def main():
     if args.backfill_days:
         since = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(time.time() - args.backfill_days * 86400))
         rows = [r for r in storage.list_articles(min_score=MIN_INTEREST_SCORE, limit=1000)
-                if not r["brief_json"] and r["ingested_at"] >= since]
+                if r["ingested_at"] >= since]
         logger.info(f"Préparation de {len(rows)} fiche(s)...")
         for r in rows:
             briefer.get_or_create_brief(r["id"])
+            briefer.get_or_create_short_audio(r["id"])
         return
 
     if args.dry_run or args.once:

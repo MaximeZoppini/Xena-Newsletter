@@ -116,6 +116,13 @@ class Storage:
                     FOREIGN KEY (article_id) REFERENCES articles(id)
                 )
             """)
+            # Articles déjà vus (ouverts, écoutés) : partagé entre tous les appareils
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS seen (
+                    article_id TEXT PRIMARY KEY,
+                    seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_articles_ingested ON articles(ingested_at)")
             conn.commit()
 
@@ -180,7 +187,11 @@ class Storage:
         a.id, a.url, a.title, a.source, a.category, a.raw_summary, a.published_at, a.ingested_at,
         an.global_score, an.systemic_impact, an.novelty_scoop, an.evidence_quality,
         an.factual_core, an.framing_detected, an.counter_view, an.source_quote,
-        an.titre_fr, an.chapo_fr, b.brief_json
+        an.titre_fr, an.chapo_fr, b.brief_json, (s.article_id IS NOT NULL) AS seen
+    """
+    _LIST_JOINS = """
+        LEFT JOIN briefs b ON a.id = b.article_id
+        LEFT JOIN seen s ON a.id = s.article_id
     """
 
     def list_articles(self, min_score: float = 0.0, limit: int = 40, offset: int = 0) -> List[Dict[str, Any]]:
@@ -189,7 +200,7 @@ class Storage:
                 SELECT {self._LIST_COLUMNS}
                 FROM articles a
                 JOIN analyses an ON a.id = an.article_id
-                LEFT JOIN briefs b ON a.id = b.article_id
+                {self._LIST_JOINS}
                 WHERE an.global_score >= ?
                 ORDER BY a.ingested_at DESC
                 LIMIT ? OFFSET ?
@@ -202,10 +213,31 @@ class Storage:
                 SELECT {self._LIST_COLUMNS}, b.source_text
                 FROM articles a
                 LEFT JOIN analyses an ON a.id = an.article_id
-                LEFT JOIN briefs b ON a.id = b.article_id
+                {self._LIST_JOINS}
                 WHERE a.id = ?
             """, (article_id,)).fetchone()
             return dict(row) if row else None
+
+    def list_recent(self, min_score: float, hours: int, unseen_only: bool = False, limit: int = 150) -> List[Dict[str, Any]]:
+        """News importantes des dernières heures, de la plus ancienne à la plus récente."""
+        with self._get_connection() as conn:
+            rows = conn.execute(f"""
+                SELECT {self._LIST_COLUMNS}
+                FROM articles a
+                JOIN analyses an ON a.id = an.article_id
+                {self._LIST_JOINS}
+                WHERE an.global_score >= ?
+                  AND datetime(a.ingested_at) >= datetime('now', ?)
+                  {"AND s.article_id IS NULL" if unseen_only else ""}
+                ORDER BY a.ingested_at DESC
+                LIMIT ?
+            """, (min_score, f"-{hours} hours", limit)).fetchall()
+            return [dict(r) for r in reversed(rows)]
+
+    def mark_seen(self, article_ids: List[str]):
+        with self._get_connection() as conn:
+            conn.executemany("INSERT OR IGNORE INTO seen (article_id) VALUES (?)", [(i,) for i in article_ids])
+            conn.commit()
 
     def save_brief(self, article_id: str, brief_json: str, source_text: str, model: str):
         with self._get_connection() as conn:

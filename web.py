@@ -41,6 +41,7 @@ def _article_card(row: dict) -> dict:
         "titre": brief.get("titre") or row.get("titre_fr") or row["title"],
         "chapo": brief.get("chapo") or row.get("chapo_fr") or row.get("factual_core") or row.get("raw_summary") or "",
         "has_brief": bool(brief),
+        "seen": bool(row.get("seen")),
     }
 
 
@@ -110,8 +111,13 @@ class Handler(BaseHTTPRequestHandler):
                     "framing": row.get("framing_detected"),
                     "source_quote": row.get("source_quote"),
                 })
+            if url.path == "/api/flash":
+                rows = self.storage.list_recent(min_score=MIN_INTEREST_SCORE, hours=72, unseen_only=True, limit=20)
+                return self._json(200, {"articles": [_article_card(r) for r in rows]})
             if m and m.group(2):
-                audio = self.briefer.get_or_create_summary_audio(m.group(1))
+                court = parse_qs(url.query).get("version", [""])[0] == "court"
+                get_audio = self.briefer.get_or_create_short_audio if court else self.briefer.get_or_create_summary_audio
+                audio = get_audio(m.group(1))
                 if not audio:
                     return self._json(502, {"error": "génération audio impossible"})
                 return self._send(200, audio, "audio/wav", cache="private, max-age=86400")
@@ -130,9 +136,13 @@ class Handler(BaseHTTPRequestHandler):
                 if not audio:
                     return self._json(502, {"error": "synthèse vocale impossible"})
                 return self._send(200, audio, "audio/wav")
+            if url.path == "/api/seen":
+                ids = [i for i in body.get("ids", []) if isinstance(i, str) and re.fullmatch(r"[0-9a-f]{16}", i)]
+                self.storage.mark_seen(ids)
+                return self._json(200, {"ok": True})
             if url.path == "/api/chat":
-                article_id = body.get("article_id", "")
-                if not re.fullmatch(r"[0-9a-f]{16}", article_id) or not self.storage.get_article(article_id):
+                article_id = body.get("article_id") or ""
+                if article_id and (not re.fullmatch(r"[0-9a-f]{16}", article_id) or not self.storage.get_article(article_id)):
                     return self._json(404, {"error": "article introuvable"})
                 audio = base64.b64decode(body["audio_b64"]) if body.get("audio_b64") else None
                 text = (body.get("text") or "").strip()

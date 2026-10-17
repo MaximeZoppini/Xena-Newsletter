@@ -37,6 +37,10 @@ async function api(path, options) {
   return resp;
 }
 
+const postJson = (path, body) => api(path, {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+});
+
 function parseDate(s) {
   if (!s) return null;
   const d = new Date(s.includes("T") ? s : s.replace(" ", "T") + "Z"); // SQLite = UTC
@@ -54,8 +58,13 @@ function dayLabel(d) {
 
 const timeLabel = (d) => d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 
-function scoreBadge(score, seuil) {
-  return h("span", { class: "score" + (score >= seuil ? "" : " low") }, (score ?? 0).toFixed(1));
+// ------------------------------------------------------------------ « déjà vu » (synchronisé serveur)
+const seenIds = new Set();
+function markSeen(id) {
+  if (!id || seenIds.has(id)) return;
+  seenIds.add(id);
+  document.querySelectorAll(`[data-card="${id}"]`).forEach((c) => c.classList.add("seen"));
+  postJson("/api/seen", { ids: [id] }).then(refreshFlashCount).catch(() => {});
 }
 
 // ------------------------------------------------------------------ réglages voix
@@ -79,7 +88,8 @@ function initSettings() {
   $("#settings-btn").addEventListener("click", () => { $("#settings").hidden = !$("#settings").hidden; });
 }
 
-// ------------------------------------------------------------------ audio
+// ------------------------------------------------------------------ lecteur : une file d'écoute unique
+// Sert au résumé d'un article, au flash « Ce que j'ai raté » et aux réponses de Xena.
 // Un seul élément <audio> réutilisé : Safari n'autorise la lecture qu'après un premier geste.
 const player = $("#player");
 const SILENCE = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=";
@@ -99,41 +109,149 @@ function applyRate() {
   player.preservesPitch = true;
   player.webkitPreservesPitch = true;
 }
-
-let currentObjectUrl = null;
-function playBlob(blob, label, showBar) {
-  if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
-  currentObjectUrl = URL.createObjectURL(blob);
-  player.src = currentObjectUrl;
-  $("#player-label").textContent = label || "";
-  $("#player-bar").hidden = !showBar;
-  applyRate();
-  return player.play();
-}
-
-$("#player-close").addEventListener("click", () => { player.pause(); $("#player-bar").hidden = true; });
 player.addEventListener("loadedmetadata", applyRate);
 
-async function playSummary(article, btn) {
-  unlockAudio();
-  stopSpeaking();
-  btn.disabled = true;
-  const label = btn.textContent;
-  btn.textContent = "Préparation de l'audio…";
-  try {
-    const blob = await (await api(`/api/articles/${article.id}/audio`)).blob();
-    await playBlob(blob, article.titre, true);
-  } catch (e) {
-    alert("Audio indisponible : " + e.message);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = label;
+const queue = { items: [], index: -1, kind: null, token: 0, blobs: new Map(), url: null };
+
+function loadItem(i) {
+  if (!queue.blobs.has(i)) {
+    const p = queue.items[i].load();
+    p.catch(() => {});
+    queue.blobs.set(i, p);
   }
+  return queue.blobs.get(i);
 }
 
-// ------------------------------------------------------------------ liste
+// items : [{ kicker, label, article, load: () => Promise<Blob>, onStart }]
+function playQueue(items, kind) {
+  stopAll();
+  unlockAudio();
+  queue.items = items;
+  queue.kind = kind;
+  queue.blobs = new Map();
+  $("#player-bar").hidden = false;
+  $("#p-dig").hidden = kind === "chat";
+  $("#p-prev").hidden = $("#p-next").hidden = items.length < 2;
+  playIndex(0);
+}
+
+async function playIndex(i) {
+  if (i < 0 || i >= queue.items.length) return finishQueue();
+  const token = ++queue.token;
+  queue.index = i;
+  const item = queue.items[i];
+  $("#player-kicker").textContent = item.kicker || "";
+  $("#player-label").textContent = item.label || "";
+  $("#progress-fill").style.width = "0%";
+  player.pause();
+  $("#p-toggle").textContent = "⏳";
+  let blob;
+  try {
+    blob = await loadItem(i);
+  } catch (e) {
+    if (token !== queue.token) return;
+    $("#player-kicker").textContent = "Audio indisponible : " + e.message;
+    return setTimeout(() => token === queue.token && playIndex(i + 1), 1500);
+  }
+  if (token !== queue.token) return;
+  if (i + 1 < queue.items.length) loadItem(i + 1); // le suivant se prépare pendant l'écoute
+  if (queue.url) URL.revokeObjectURL(queue.url);
+  queue.url = URL.createObjectURL(blob);
+  player.src = queue.url;
+  applyRate();
+  item.onStart?.();
+  player.play().catch(() => { $("#p-toggle").textContent = "▶"; });
+}
+
+player.addEventListener("ended", () => {
+  if (queue.index < 0) return;
+  const token = queue.token;
+  // Respiration entre deux segments
+  setTimeout(() => token === queue.token && playIndex(queue.index + 1), queue.kind === "chat" ? 300 : 900);
+});
+player.addEventListener("timeupdate", () => {
+  if (player.duration) $("#progress-fill").style.width = (100 * player.currentTime / player.duration) + "%";
+});
+player.addEventListener("pause", () => { $("#p-toggle").textContent = "▶"; });
+player.addEventListener("play", () => { $("#p-toggle").textContent = "⏸"; });
+
+function finishQueue() {
+  queue.token++;
+  queue.index = -1;
+  queue.items = [];
+  queue.kind = null;
+  player.pause();
+  $("#player-bar").hidden = true;
+  highlight(-1);
+}
+
+function stopAll() {
+  finishQueue();
+  if (window.speechSynthesis) speechSynthesis.cancel();
+}
+
+$("#p-toggle").addEventListener("click", () => {
+  if (queue.index < 0) return;
+  if (player.paused) player.play().catch(() => {}); else player.pause();
+});
+$("#p-next").addEventListener("click", () => playIndex(queue.index + 1));
+$("#p-prev").addEventListener("click", () => {
+  if (player.currentTime > 4) { player.currentTime = 0; return; }
+  playIndex(Math.max(0, queue.index - 1));
+});
+$("#p-close").addEventListener("click", stopAll);
+$("#p-dig").addEventListener("click", () => {
+  const item = queue.items[queue.index];
+  if (!item?.article) return;
+  player.pause();
+  openChat(item.article);
+});
+
+const fetchBlob = (path) => () => api(path).then((r) => r.blob());
+
+function listenArticle(a) {
+  markSeen(a.id);
+  playQueue([{
+    kicker: `Résumé · ${a.source}`, label: a.titre, article: a,
+    load: fetchBlob(`/api/articles/${a.id}/audio`),
+  }], "article");
+}
+
+// ------------------------------------------------------------------ flash « Ce que j'ai raté »
+async function refreshFlashCount() {
+  try {
+    const data = await (await api("/api/flash")).json();
+    const n = data.articles.length;
+    $("#flash-count").textContent = n ? `(${n})` : "";
+    $("#flash-btn").classList.toggle("empty", !n);
+    return data.articles;
+  } catch { return []; }
+}
+
+async function playFlash() {
+  unlockAudio();
+  const btn = $("#flash-btn");
+  btn.disabled = true;
+  const articles = await refreshFlashCount();
+  btn.disabled = false;
+  const intro = articles.length
+    ? `${articles.length === 1 ? "Une news" : articles.length + " news"} depuis ta dernière écoute. On y va.`
+    : "Rien de nouveau depuis ta dernière écoute.";
+  const items = [{
+    kicker: "Ce que j'ai raté", label: intro,
+    load: () => postJson("/api/tts", { text: intro }).then((r) => r.blob()),
+  }];
+  articles.forEach((a, i) => items.push({
+    kicker: `${i + 1}/${articles.length} · ${a.source}`, label: a.titre, article: a,
+    load: fetchBlob(`/api/articles/${a.id}/audio?version=court`),
+    onStart: () => markSeen(a.id),
+  }));
+  playQueue(items, "flash");
+}
+
+// ------------------------------------------------------------------ fil d'actu
 let filtre = store.get("xena-filtre", "top");
-let listState = { offset: 0, done: false, lastDay: null };
+let feedState = { offset: 0, lastDay: null, seuil: 7 };
 
 function initTabs() {
   document.querySelectorAll(".tab").forEach((t) => {
@@ -142,132 +260,136 @@ function initTabs() {
       filtre = t.dataset.filtre;
       store.set("xena-filtre", filtre);
       document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x === t));
-      if (location.hash && location.hash !== "#/") location.hash = "#/"; else renderList();
+      renderFeed();
     });
   });
 }
 
-async function renderList() {
-  $("#tabs").hidden = false;
-  const app = $("#app");
-  app.replaceChildren(h("div", { class: "loading" }, "Chargement…"));
-  listState = { offset: 0, done: false, lastDay: null };
-  const container = h("div", {});
-  const more = h("button", { class: "btn ghost more", onclick: () => loadMore(container, more) }, "Plus de news");
-  await loadMore(container, more);
-  app.replaceChildren(container, more);
-  if (!container.children.length) app.replaceChildren(h("p", { class: "empty" }, "Rien pour l'instant."));
+async function renderFeed() {
+  const feed = $("#feed");
+  feed.replaceChildren(h("div", { class: "loading" }, "Chargement…"));
+  feedState = { offset: 0, lastDay: null, seuil: 7 };
+  const list = h("div", {});
+  const more = h("button", { class: "btn ghost more", onclick: () => loadMore(list, more) }, "Plus de news");
+  await loadMore(list, more);
+  feed.replaceChildren(list, more);
+  if (!list.children.length) feed.replaceChildren(h("p", { class: "empty" }, "Rien pour l'instant."));
 }
 
-async function loadMore(container, more) {
+async function loadMore(list, more) {
   more.disabled = true;
   try {
-    const data = await (await api(`/api/articles?filtre=${filtre}&limit=40&offset=${listState.offset}`)).json();
-    listState.offset += data.articles.length;
+    const data = await (await api(`/api/articles?filtre=${filtre}&limit=40&offset=${feedState.offset}`)).json();
+    feedState.offset += data.articles.length;
+    feedState.seuil = data.seuil;
     for (const a of data.articles) {
+      if (a.seen) seenIds.add(a.id);
       const d = parseDate(a.ingested_at);
       const day = d ? dayLabel(d) : "";
-      if (day !== listState.lastDay) {
-        container.append(h("div", { class: "day" }, day));
-        listState.lastDay = day;
+      if (day !== feedState.lastDay) {
+        list.append(h("div", { class: "day" }, day));
+        feedState.lastDay = day;
       }
-      container.append(h("a", { class: "card", href: `#/a/${a.id}` },
-        h("div", { class: "meta" }, scoreBadge(a.score, data.seuil), h("span", {}, a.source), d ? h("span", {}, "· " + timeLabel(d)) : null),
-        h("h2", {}, a.titre),
-        a.chapo ? h("p", {}, a.chapo) : null,
-      ));
+      list.append(renderCard(a, d));
     }
     more.hidden = data.articles.length < 40;
   } catch (e) {
-    container.append(h("p", { class: "empty" }, "Erreur : " + e.message));
+    list.append(h("p", { class: "empty" }, "Erreur : " + e.message));
   } finally {
     more.disabled = false;
   }
 }
 
-// ------------------------------------------------------------------ article
-let currentArticle = null;
-
-async function renderArticle(id) {
-  $("#tabs").hidden = true;
-  const app = $("#app");
-  app.replaceChildren(
-    h("a", { class: "back", href: "#/" }, "← Retour"),
-    h("div", { class: "loading" }, "Lecture de l'article et préparation de la fiche… (quelques secondes la première fois)"),
+function renderCard(a, d) {
+  const details = h("div", { class: "details", hidden: true });
+  const toggle = h("button", { class: "chip", onclick: () => toggleDetails(a, details, toggle) }, "Lire plus");
+  return h("article", { class: "card" + (a.seen ? " seen" : ""), "data-card": a.id },
+    h("div", { class: "meta" },
+      h("span", { class: "dot", title: "Pas encore vu" }),
+      h("span", { class: "score" + (a.score >= feedState.seuil ? "" : " low") }, (a.score ?? 0).toFixed(1)),
+      h("span", { class: "source" }, a.source),
+      d ? h("span", {}, "· " + timeLabel(d)) : null,
+    ),
+    h("h2", {}, a.titre),
+    a.chapo ? h("p", { class: "chapo-short" }, a.chapo) : null,
+    h("div", { class: "card-actions" },
+      toggle,
+      h("button", { class: "chip", onclick: () => listenArticle(a) }, "▶ Écouter"),
+      h("button", { class: "chip", onclick: () => openChat(a) }, "🎙 En parler"),
+    ),
+    details,
   );
-  let a;
-  try {
-    a = await (await api(`/api/articles/${id}`)).json();
-  } catch (e) {
-    app.append(h("p", { class: "empty" }, "Erreur : " + e.message));
+}
+
+async function toggleDetails(a, details, toggle) {
+  if (!details.hidden) {
+    details.hidden = true;
+    toggle.textContent = "Lire plus";
     return;
   }
-  currentArticle = a;
-  const b = a.brief || {};
-  const d = parseDate(a.published_at) || parseDate(a.ingested_at);
+  details.hidden = false;
+  toggle.textContent = "Réduire";
+  markSeen(a.id);
+  if (details.dataset.loaded) return;
+  details.replaceChildren(h("p", { class: "note" }, "Lecture de l'article et préparation de la fiche…"));
+  try {
+    const full = await (await api(`/api/articles/${a.id}`)).json();
+    Object.assign(a, { brief: full.brief, url: full.url });
+    details.replaceChildren(...renderBrief(a, full).filter(Boolean));
+    details.dataset.loaded = "1";
+  } catch (e) {
+    details.replaceChildren(h("p", { class: "note" }, "Erreur : " + e.message));
+  }
+}
 
-  const listenBtn = h("button", { class: "btn", onclick: () => playSummary(a, listenBtn) }, "▶ Écouter le résumé");
-  const talkBtn = h("button", { class: "btn ghost", onclick: () => openChat(a) }, "🎙 En discuter");
-
+function renderBrief(a, full) {
+  const b = full.brief || {};
   const section = (title, ...content) => h("section", {}, h("h3", {}, title), ...content);
-
-  app.replaceChildren(h("article", { class: "article" },
-    h("a", { class: "back", href: "#/" }, "← Retour"),
-    h("div", { class: "meta" }, scoreBadge(a.score, 0), h("span", {}, a.source),
-      d ? h("span", {}, "· " + d.toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" })) : null),
-    h("h1", {}, b.titre || a.titre),
-    h("p", { class: "chapo" }, b.chapo || a.chapo),
-    h("div", { class: "actions" }, listenBtn, talkBtn),
-
-    b.recit?.length ? h("div", { class: "prose" }, b.recit.map((p) => h("p", {}, p))) :
-      h("div", { class: "prose" }, h("p", {}, a.factual_core || "")),
-
+  return [
+    b.chapo && b.chapo !== a.chapo ? h("p", { class: "lead" }, b.chapo) : null,
+    h("div", { class: "prose" }, (b.recit?.length ? b.recit : [full.factual_core || ""]).map((p) => h("p", {}, p))),
     b.pourquoi_ca_compte ? section("Pourquoi ça compte", h("div", { class: "prose" }, h("p", {}, b.pourquoi_ca_compte))) : null,
-
     section("Version de la partie mise en cause",
-      h("div", { class: "prose" }, h("p", {}, b.version_mise_en_cause || a.counter_view || "Non mentionnée."))),
-
+      h("div", { class: "prose" }, h("p", {}, b.version_mise_en_cause || full.counter_view || "Non mentionnée."))),
     b.concepts?.length ? section("Pour bien comprendre", h("div", { class: "box" }, b.concepts.map((c) =>
       h("div", { class: "concept" },
         h("b", {}, c.terme),
         h("p", {}, c.explication),
         h("button", { class: "link-btn", onclick: () => openChat(a, `Explique-moi plus en détail « ${c.terme} », et son rôle exact dans cette affaire.`) }, "Creuser à l'oral →"),
       )))) : null,
-
     b.questions_ouvertes?.length ? section("Ce qu'on ne sait pas encore",
       h("div", { class: "prose" }, b.questions_ouvertes.map((q) => h("p", {}, q)))) : null,
-
     section("Source",
-      b.angle_source || a.framing ? h("p", { class: "note" }, "Angle : " + (b.angle_source || a.framing)) : null,
-      a.source_quote ? h("p", { class: "quote" }, a.source_quote) : null,
+      b.angle_source || full.framing ? h("p", { class: "note" }, "Angle : " + (b.angle_source || full.framing)) : null,
+      full.source_quote ? h("p", { class: "quote" }, full.source_quote) : null,
       b.limites ? h("p", { class: "note" }, b.limites) : null,
-      h("p", { class: "note" }, "Titre d'origine : " + a.title_original),
-      h("a", { class: "source-link", href: a.url, target: "_blank", rel: "noopener" }, `Lire sur ${a.source} ↗`),
+      h("p", { class: "note" }, "Titre d'origine : " + full.title_original),
+      h("a", { class: "source-link", href: full.url, target: "_blank", rel: "noopener" }, `Lire sur ${full.source} ↗`),
     ),
-  ));
-  window.scrollTo(0, 0);
+  ];
 }
 
 // ------------------------------------------------------------------ discussion
-const chat = { article: null, history: [], speakToken: 0, lastAnswer: "" };
+// Une seule conversation, qui connaît toutes les news de la semaine ; on peut la centrer sur un article.
+const chat = { focus: null, history: store.get("xena-chat", []), lastAnswer: "" };
 
-function chatKey(id) { return `xena-chat-${id}`; }
+function setFocus(article) {
+  chat.focus = article || null;
+  $("#focus").hidden = !article;
+  $("#focus-title").textContent = article ? article.titre : "";
+}
 
 function openChat(article, initialQuestion) {
   unlockAudio();
-  if (chat.article?.id !== article.id) {
-    chat.article = article;
-    chat.history = store.get(chatKey(article.id), []);
-    $("#chat-sub").textContent = (article.brief?.titre || article.titre);
-    renderChatLog();
-  }
+  if (article) { setFocus(article); markSeen(article.id); }
+  renderChatLog();
   $("#chat").hidden = false;
   if (initialQuestion) sendQuestion({ text: initialQuestion });
 }
 
 function closeChat() {
-  stopSpeaking();
-  if (recorder.active) recorder.cancel();
+  if (queue.kind === "chat") stopAll();
+  if (recorder.active) { clearInterval(recorder.timer); recorder.cancel(); }
   $("#chat").hidden = true;
 }
 
@@ -280,7 +402,8 @@ function renderChatLog() {
   log.replaceChildren();
   if (!chat.history.length) {
     log.append(h("p", { class: "note" },
-      "Pose ta question à voix haute : appuie une fois pour parler, prends tout ton temps, puis appuie à nouveau pour envoyer."));
+      "Parle-lui de ce que tu veux : une news, un lien entre plusieurs, un concept. " +
+      "Appuie une fois pour parler, prends tout ton temps, puis appuie à nouveau pour envoyer."));
   }
   for (const turn of chat.history) log.append(renderMsg(turn));
   log.scrollTop = log.scrollHeight;
@@ -290,34 +413,34 @@ function renderMsg(turn) {
   if (turn.role === "user") {
     return h("div", { class: "msg user" }, h("div", { class: "who" }, "Toi"), h("div", { class: "body" }, turn.text));
   }
+  const searched = turn.queries?.length;
   return h("div", { class: "msg model" }, h("div", { class: "who" }, "Xena"),
-    h("div", { class: "body" }, paragraphs(turn.text).map((p) => h("p", {}, p))));
+    h("div", { class: "body" }, paragraphs(turn.text).map((p) => h("p", {}, p))),
+    h("div", { class: "grounding" + (searched ? "" : " warn") },
+      searched ? "🔎 " + turn.queries.join(" · ") : "⚠ Réponse sans recherche web",
+      turn.sources?.length ? h("div", { class: "sources" }, turn.sources.map((s) =>
+        h("a", { href: s.url, target: "_blank", rel: "noopener" }, s.title))) : null,
+    ));
 }
 
 function setStatus(text) { $("#chat-status").textContent = text || ""; }
 
 async function sendQuestion({ text, audioB64 }) {
-  stopSpeaking();
-  const article = chat.article;
+  if (queue.kind === "chat") stopAll();
   const pending = { role: "user", text: text || "🎙 …" };
   chat.history.push(pending);
   renderChatLog();
   const t0 = Date.now();
-  setStatus("Xena réfléchit…");
-  const timer = setInterval(() => setStatus(`Xena réfléchit… ${Math.round((Date.now() - t0) / 1000)} s`), 1000);
+  setStatus("Xena cherche et réfléchit…");
+  const timer = setInterval(() => setStatus(`Xena cherche et réfléchit… ${Math.round((Date.now() - t0) / 1000)} s`), 1000);
   $("#mic").disabled = true;
   try {
-    const history = chat.history.slice(0, -1);
-    const resp = await api("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ article_id: article.id, history, text, audio_b64: audioB64 }),
-    });
-    const { question, answer } = await resp.json();
-    if (chat.article !== article) return;
+    const history = chat.history.slice(0, -1).map(({ role, text }) => ({ role, text }));
+    const resp = await postJson("/api/chat", { article_id: chat.focus?.id || "", history, text, audio_b64: audioB64 });
+    const { question, answer, queries, sources } = await resp.json();
     pending.text = question || pending.text;
-    chat.history.push({ role: "model", text: answer });
-    store.set(chatKey(article.id), chat.history);
+    chat.history.push({ role: "model", text: answer, queries, sources });
+    store.set("xena-chat", chat.history.slice(-40));
     renderChatLog();
     setStatus("");
     speak(answer);
@@ -332,59 +455,24 @@ async function sendQuestion({ text, audioB64 }) {
 }
 
 // --- voix des réponses : paragraphe par paragraphe, le suivant se prépare pendant la lecture
-function stopSpeaking() {
-  chat.speakToken++;
-  if (window.speechSynthesis) speechSynthesis.cancel();
-  if (!$("#player-bar").hidden) return; // ne coupe pas le résumé audio en cours
-  player.pause();
-  document.querySelectorAll("p.speaking").forEach((p) => p.classList.remove("speaking"));
-}
-
 function highlight(index) {
-  const msgs = document.querySelectorAll("#chat-log .msg.model");
-  const last = msgs[msgs.length - 1];
   document.querySelectorAll("p.speaking").forEach((p) => p.classList.remove("speaking"));
-  const p = last?.querySelectorAll(".body p")[index];
+  if (index < 0) return;
+  const msgs = document.querySelectorAll("#chat-log .msg.model");
+  const p = msgs[msgs.length - 1]?.querySelectorAll(".body p")[index];
   if (p) { p.classList.add("speaking"); p.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
 }
 
-function playUntilEnd(blob) {
-  return new Promise((resolve) => {
-    const done = () => { player.removeEventListener("ended", done); player.removeEventListener("pause", done); resolve(); };
-    player.addEventListener("ended", done);
-    player.addEventListener("pause", done);
-    playBlob(blob, "", false).catch(done);
-  });
-}
-
-async function speak(text) {
+function speak(text) {
   chat.lastAnswer = text;
-  const token = ++chat.speakToken;
   const parts = paragraphs(text);
   if (!parts.length) return;
-  if (!$("#player-bar").hidden) { player.pause(); $("#player-bar").hidden = true; }
-
-  if (settings.voice === "browser" || !window.fetch) return speakBrowser(parts, token);
-
-  const tts = (t) => api("/api/tts", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: t }),
-  }).then((r) => r.blob());
-
-  let next = tts(parts[0]);
-  for (let i = 0; i < parts.length; i++) {
-    let blob;
-    try { blob = await next; } catch (e) {
-      if (token === chat.speakToken) setStatus("Voix Gemini indisponible, voix du navigateur.");
-      return speakBrowser(parts.slice(i), token, i);
-    }
-    if (token !== chat.speakToken) return;
-    if (i + 1 < parts.length) next = tts(parts[i + 1]);
-    highlight(i);
-    await playUntilEnd(blob);
-    if (token !== chat.speakToken) return;
-    await new Promise((r) => setTimeout(r, 350)); // respiration entre les paragraphes
-  }
-  highlight(-1);
+  if (settings.voice === "browser") { stopAll(); return speakBrowser(parts); }
+  playQueue(parts.map((p, i) => ({
+    kicker: "Xena répond", label: `Paragraphe ${i + 1}/${parts.length}`,
+    load: () => postJson("/api/tts", { text: p }).then((r) => r.blob()),
+    onStart: () => highlight(i),
+  })), "chat");
 }
 
 function pickFrenchVoice() {
@@ -394,7 +482,7 @@ function pickFrenchVoice() {
     voices.find((v) => v.lang === "fr-FR") || voices[0];
 }
 
-function speakBrowser(parts, token, offset = 0) {
+function speakBrowser(parts) {
   if (!window.speechSynthesis) return;
   const voice = pickFrenchVoice();
   parts.forEach((text, i) => {
@@ -402,7 +490,7 @@ function speakBrowser(parts, token, offset = 0) {
     u.lang = "fr-FR";
     if (voice) u.voice = voice;
     u.rate = settings.speed;
-    u.onstart = () => { if (token === chat.speakToken) highlight(i + offset); };
+    u.onstart = () => highlight(i);
     speechSynthesis.speak(u);
   });
 }
@@ -440,7 +528,7 @@ const recorder = {
 
   _release() {
     this.active = false;
-    this.node && (this.node.onaudioprocess = null);
+    if (this.node) this.node.onaudioprocess = null;
     this.stream?.getTracks().forEach((t) => t.stop());
     this.ctx?.close();
   },
@@ -486,8 +574,7 @@ function toBase64(bytes) {
 }
 
 function updateMic() {
-  const mic = $("#mic");
-  mic.classList.toggle("recording", recorder.active);
+  $("#mic").classList.toggle("recording", recorder.active);
   if (recorder.active) {
     const s = Math.round((Date.now() - recorder.startedAt) / 1000);
     $("#mic-label").textContent = `Je t'écoute… ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")} · appuie pour envoyer`;
@@ -499,7 +586,8 @@ function updateMic() {
 async function onMic() {
   unlockAudio();
   if (!recorder.active) {
-    stopSpeaking();
+    if (queue.kind === "chat") stopAll(); else player.pause();
+    if (window.speechSynthesis) speechSynthesis.cancel();
     try {
       await recorder.start();
     } catch (e) {
@@ -522,67 +610,62 @@ async function onMic() {
   }
 }
 
-function geminiPrompt(a) {
-  const b = a.brief || {};
-  return [
-    "Je veux discuter avec toi de cette actualité, à l'oral. Sois précis et exigeant, ne simplifie pas jusqu'à devenir faux, et parle lentement.",
-    "",
-    `Titre : ${b.titre || a.titre}`,
-    `Source : ${a.source} — ${a.url}`,
-    "",
-    b.chapo || a.chapo || "",
-    ...(b.recit || []),
-    b.pourquoi_ca_compte ? `Pourquoi ça compte : ${b.pourquoi_ca_compte}` : "",
-    `Version de la partie mise en cause : ${b.version_mise_en_cause || a.counter_view || "non mentionnée"}`,
-  ].join("\n");
+function geminiPrompt() {
+  const lines = [
+    "Je veux discuter avec toi de l'actualité, à l'oral. Sois précis et exigeant, vérifie sur le web avant d'affirmer, et parle lentement.",
+  ];
+  const a = chat.focus;
+  if (a) {
+    const b = a.brief || {};
+    lines.push("", `Article : ${b.titre || a.titre}`, `Source : ${a.source} — ${a.url}`, "",
+      b.chapo || a.chapo || "", ...(b.recit || []),
+      `Version de la partie mise en cause : ${b.version_mise_en_cause || "non mentionnée"}`);
+  }
+  return lines.join("\n");
 }
 
 function initChat() {
+  $("#talk-fab").addEventListener("click", () => openChat(null));
   $("#mic").addEventListener("click", onMic);
   $("#chat-close").addEventListener("click", closeChat);
+  $("#focus-clear").addEventListener("click", () => setFocus(null));
   $("#chat-form").addEventListener("submit", (e) => {
     e.preventDefault();
     const input = $("#chat-input");
     const text = input.value.trim();
-    if (!text || !chat.article) return;
+    if (!text) return;
     input.value = "";
     unlockAudio();
     sendQuestion({ text });
   });
-  $("#stop-voice").addEventListener("click", () => { chat.speakToken++; window.speechSynthesis?.cancel(); player.pause(); });
+  $("#stop-voice").addEventListener("click", () => { if (queue.kind === "chat") stopAll(); window.speechSynthesis?.cancel(); });
   $("#replay").addEventListener("click", () => { unlockAudio(); if (chat.lastAnswer) speak(chat.lastAnswer); });
   $("#clear-chat").addEventListener("click", () => {
-    if (!chat.article) return;
-    stopSpeaking();
+    if (queue.kind === "chat") stopAll();
     chat.history = [];
-    store.set(chatKey(chat.article.id), []);
+    store.set("xena-chat", []);
+    setFocus(null);
     renderChatLog();
   });
   $("#to-gemini").addEventListener("click", async () => {
-    if (!chat.article) return;
     try {
-      await navigator.clipboard.writeText(geminiPrompt(chat.article));
+      await navigator.clipboard.writeText(geminiPrompt());
       setStatus("Contexte copié : colle-le dans Gemini, puis lance Gemini Live.");
     } catch {
-      setStatus("Copie impossible, ouvre Gemini et décris l'article.");
+      setStatus("Copie impossible, ouvre Gemini et décris le sujet.");
     }
     window.open("https://gemini.google.com/app", "_blank", "noopener");
   });
+  const last = [...chat.history].reverse().find((t) => t.role === "model");
+  if (last) chat.lastAnswer = last.text;
 }
 
-// ------------------------------------------------------------------ routage
-function route() {
-  const m = location.hash.match(/^#\/a\/([0-9a-f]{16})$/);
-  if (m) {
-    if (chat.article && chat.article.id !== m[1]) closeChat();
-    renderArticle(m[1]);
-  }
-  else { closeChat(); renderList(); }
-}
-
+// ------------------------------------------------------------------ démarrage
 initSettings();
 initTabs();
 initChat();
+$("#flash-btn").addEventListener("click", playFlash);
 if (window.speechSynthesis) speechSynthesis.getVoices();
-window.addEventListener("hashchange", route);
-route();
+renderFeed();
+refreshFlashCount();
+setInterval(refreshFlashCount, 5 * 60 * 1000);
