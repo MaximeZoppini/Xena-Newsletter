@@ -32,6 +32,7 @@ def _article_card(row: dict) -> dict:
         "published_at": row["published_at"],
         "ingested_at": row["ingested_at"],
         "score": row["global_score"],
+        "image": row.get("image_url") or "",
         "scores": {
             "impact": row["systemic_impact"],
             "nouveaute": row["novelty_scoop"],

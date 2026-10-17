@@ -11,7 +11,7 @@ import re
 import threading
 import wave
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 from bs4 import BeautifulSoup
@@ -111,22 +111,28 @@ def _strip_json_fence(text: str) -> str:
     return text.strip()
 
 
-def fetch_article_text(url: str) -> str:
-    """Récupère le texte lisible d'un article (paragraphes), sans contourner de paywall."""
+def fetch_article_page(url: str) -> Tuple[str, str]:
+    """Récupère le texte lisible d'un article et son image d'aperçu, sans contourner de paywall."""
     try:
         resp = requests.get(url, headers=HEADERS, timeout=12)
         if resp.status_code != 200 or "html" not in resp.headers.get("Content-Type", "html"):
-            return ""
+            return "", ""
         soup = BeautifulSoup(resp.content, "html.parser")
+        image = ""
+        for attrs in ({"property": "og:image"}, {"name": "twitter:image"}, {"property": "og:image:url"}):
+            tag = soup.find("meta", attrs=attrs)
+            if tag and (tag.get("content") or "").startswith("http"):
+                image = tag["content"]
+                break
         for tag in soup(["script", "style", "nav", "header", "footer", "aside", "form", "noscript", "figure"]):
             tag.decompose()
         root = soup.find("article") or soup.find("main") or soup.body or soup
         paragraphs = [" ".join(p.get_text(" ", strip=True).split()) for p in root.find_all(["p", "h2", "h3", "li"])]
         text = "\n".join(p for p in paragraphs if len(p) > 40)
-        return text[:MAX_SOURCE_CHARS]
+        return text[:MAX_SOURCE_CHARS], image
     except Exception as e:
         logger.info(f"Récupération impossible de {url} : {e}")
-        return ""
+        return "", ""
 
 
 class Briefer:
@@ -155,7 +161,9 @@ class Briefer:
         if not self.client:
             return None
         from google.genai import types
-        source_text = fetch_article_text(art["url"]) if art["url"].startswith("http") else ""
+        source_text, image = fetch_article_page(art["url"]) if art["url"].startswith("http") else ("", "")
+        if image:
+            self.storage.set_image(art["id"], image)
         if len(source_text) < len(art.get("raw_summary") or ""):
             source_text = art.get("raw_summary") or ""
         content = f"""SOURCE : {art['source']}
@@ -235,6 +243,14 @@ VERSION DE LA PARTIE MISE EN CAUSE (analyse préalable) : {art.get('counter_view
             if audio:
                 path.write_bytes(audio)
             return audio
+
+    def ensure_image(self, article_id: str):
+        """Image d'aperçu pour le fil, si le flux n'en fournissait pas."""
+        art = self.storage.get_article(article_id)
+        if art and not art.get("image_url") and art["url"].startswith("http"):
+            _, image = fetch_article_page(art["url"])
+            if image:
+                self.storage.set_image(article_id, image)
 
     def get_or_create_short_audio(self, article_id: str) -> Optional[bytes]:
         """Version courte lue dans le flash « Ce que j'ai raté » : titre + l'essentiel."""

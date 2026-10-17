@@ -34,21 +34,21 @@ class TypeSafeEvaluator:
             "questions": {
                 "is_investigation_or_scoop": {
                     "type": "noul",
-                    "instructions": "Is this reporting a substantive investigative finding, leaked documents, regulatory sanction, major court ruling, cybersecurity breach/0-day, or whistleblower revelation, rather than routine product news or PR release?"
+                    "instructions": "Is this reporting something genuinely new and significant: a technological or scientific breakthrough, a major product or vehicle unveiling, a new frontier AI model, a historic space mission, a published scientific discovery, or a major investigative revelation, rather than routine updates, minor features or business-as-usual news?"
                 },
                 "is_opinion_or_pr": {
                     "type": "noul",
-                    "instructions": "Is this primarily an opinion column, partisan rant, editorial tribune, sponsored content, or commercial product review?"
+                    "instructions": "Is this primarily an opinion column, partisan rant, sponsored content, deal/promo, buying guide or hands-on product review (not a product unveiling or launch announcement)?"
                 },
                 "systemic_importance": {
                     "type": "score",
                     "instructions": "Rate the systemic impact and societal or technical gravity of this development.",
                     "criteria": [
-                        "Trivial routine update or product review",
-                        "Minor company announcement or standard commentary",
-                        "Moderate legal, economic or technical update",
-                        "Major investigative revelation, confirmed leak or critical exploit",
-                        "Historic systemic crisis, constitutional breach or national scandal"
+                        "Trivial routine update, promo or product review",
+                        "Minor company announcement, funding round or standard commentary",
+                        "Notable technical, scientific, legal or economic development",
+                        "Major unveiling, technological breakthrough or major investigative revelation",
+                        "Historic breakthrough or event that changes what is possible"
                     ]
                 }
             }
@@ -113,7 +113,7 @@ class TypeSafeEvaluator:
                 return {
                     "should_analyze": False,
                     "estimated_score": scaled_score,
-                    "reason": f"Sujet mineur ou non-investigatif (scoop prob: {p_scoop:.2f}, impact: {scaled_score}/10)",
+                    "reason": f"Sujet mineur ou routinier (scoop prob: {p_scoop:.2f}, impact: {scaled_score}/10)",
                     "p_scoop": p_scoop,
                     "p_opinion": p_opinion,
                     "systemic_score": scaled_score,

@@ -100,6 +100,10 @@ class Storage:
                 conn.execute("ALTER TABLE analyses ADD COLUMN target_domain TEXT")
             except sqlite3.OperationalError:
                 pass
+            try:
+                conn.execute("ALTER TABLE articles ADD COLUMN image_url TEXT")
+            except sqlite3.OperationalError:
+                pass
             for col in ("chosen_style", "titre_fr", "chapo_fr"):
                 try:
                     conn.execute(f"ALTER TABLE analyses ADD COLUMN {col} TEXT")
@@ -142,8 +146,8 @@ class Storage:
         with self._get_connection() as conn:
             try:
                 conn.execute("""
-                    INSERT INTO articles (id, url, title, source, category, raw_summary, published_at, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO articles (id, url, title, source, category, raw_summary, published_at, status, image_url)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     art_id,
                     article["url"],
@@ -152,7 +156,8 @@ class Storage:
                     article.get("category", "general"),
                     article.get("summary", ""),
                     article.get("published_at", ""),
-                    "pending"
+                    "pending",
+                    article.get("image", "")
                 ))
                 conn.commit()
                 return True
@@ -184,7 +189,7 @@ class Storage:
             conn.commit()
 
     _LIST_COLUMNS = """
-        a.id, a.url, a.title, a.source, a.category, a.raw_summary, a.published_at, a.ingested_at,
+        a.id, a.url, a.title, a.source, a.category, a.raw_summary, a.published_at, a.ingested_at, a.image_url,
         an.global_score, an.systemic_impact, an.novelty_scoop, an.evidence_quality,
         an.factual_core, an.framing_detected, an.counter_view, an.source_quote,
         an.titre_fr, an.chapo_fr, b.brief_json, (s.article_id IS NOT NULL) AS seen
@@ -202,7 +207,7 @@ class Storage:
                 JOIN analyses an ON a.id = an.article_id
                 {self._LIST_JOINS}
                 WHERE an.global_score >= ?
-                ORDER BY a.ingested_at DESC
+                ORDER BY date(a.ingested_at, 'localtime') DESC, an.global_score DESC, a.ingested_at DESC
                 LIMIT ? OFFSET ?
             """, (min_score, limit, offset)).fetchall()
             return [dict(r) for r in rows]
@@ -233,6 +238,12 @@ class Storage:
                 LIMIT ?
             """, (min_score, f"-{hours} hours", limit)).fetchall()
             return [dict(r) for r in reversed(rows)]
+
+    def set_image(self, article_id: str, image_url: str):
+        with self._get_connection() as conn:
+            conn.execute("UPDATE articles SET image_url = ? WHERE id = ? AND COALESCE(image_url, '') = ''",
+                         (image_url, article_id))
+            conn.commit()
 
     def mark_seen(self, article_ids: List[str]):
         with self._get_connection() as conn:

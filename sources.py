@@ -69,6 +69,16 @@ def fetch_rss_feeds() -> List[Dict[str, Any]]:
                     if should_skip_title(title):
                         continue
                     
+                    image = ""
+                    for media in (entry.get("media_content") or []) + (entry.get("media_thumbnail") or []):
+                        if media.get("url"):
+                            image = media["url"]
+                            break
+                    if not image:
+                        for enc in entry.get("enclosures") or []:
+                            if enc.get("type", "").startswith("image") and enc.get("href"):
+                                image = enc["href"]
+                                break
                     raw_summary = entry.get("summary") or entry.get("description", "")
                     summary = clean_html(raw_summary)
                     pub_date = entry.get("published", "") or entry.get("updated", "")
@@ -81,7 +91,8 @@ def fetch_rss_feeds() -> List[Dict[str, Any]]:
                         "category": feed_info["category"],
                         "known_bias": feed_info["known_bias"],
                         "summary": summary,
-                        "published_at": pub_date
+                        "published_at": pub_date,
+                        "image": image
                     })
         except Exception as e:
             logger.debug(f"Erreur légère fetch RSS {feed_info['name']}: {e}")

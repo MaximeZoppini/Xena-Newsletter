@@ -21,8 +21,9 @@ flowchart LR
     W --> C[Conversation\nGemini Pro + recherche web]
 ```
 
-**Score** = 0,40 × impact systémique + 0,35 × nouveauté + 0,25 × solidité des preuves.
-Ligne éditoriale : neutralité sur le fond, la version de la partie mise en cause est toujours présentée, rien n'est inventé au-delà de la source, aucun contournement de paywall.
+**Priorité** : les avancées technologiques et scientifiques et les annonces vraiment nouvelles (dévoilements, percées, nouveaux modèles d'IA, spatial, découvertes publiées), puis les grandes révélations d'investigation.
+**Score** = 0,40 × portée + 0,35 × rupture + 0,25 × solidité (démontré, publié, officiel vs rumeur). Dans le fil, un point indique l'importance : rouge ≥ 8,5, orange ≥ 7,5, jaune ≥ 6,5, blanc en dessous.
+Ligne éditoriale : neutralité sur le fond, rien n'est inventé au-delà de la source, aucun contournement de paywall.
 
 ## Fichiers
 
@@ -55,7 +56,8 @@ Tout passe par la clé API Gemini (les abonnements Gemini / ChatGPT / Claude ne 
 pct exec 104 -- systemctl status x-newsletter
 pct exec 104 -- journalctl -u x-newsletter -f
 pct exec 104 -- journalctl -u xena-update -n 20      # derniers déploiements
-pct exec 104 -- /opt/x-newsletter/venv/bin/python /opt/x-newsletter/main.py --backfill-days 3   # préparer les fiches manquantes
+pct exec 104 -- bash -c "cd /opt/x-newsletter && venv/bin/python main.py --backfill-days 3"   # préparer fiches et audios manquants
+pct exec 104 -- bash -c "cd /opt/x-newsletter && venv/bin/python main.py --rescore-days 3"    # re-noter après un changement de grille
 ```
 
 ### Installation initiale du conteneur

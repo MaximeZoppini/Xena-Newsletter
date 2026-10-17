@@ -251,7 +251,7 @@ async function playFlash() {
 
 // ------------------------------------------------------------------ fil d'actu
 let filtre = store.get("xena-filtre", "top");
-let feedState = { offset: 0, lastDay: null, seuil: 7 };
+let feedState = { offset: 0, lastDay: null };
 
 function initTabs() {
   document.querySelectorAll(".tab").forEach((t) => {
@@ -268,7 +268,7 @@ function initTabs() {
 async function renderFeed() {
   const feed = $("#feed");
   feed.replaceChildren(h("div", { class: "loading" }, "Chargement…"));
-  feedState = { offset: 0, lastDay: null, seuil: 7 };
+  feedState = { offset: 0, lastDay: null };
   const list = h("div", {});
   const more = h("button", { class: "btn ghost more", onclick: () => loadMore(list, more) }, "Plus de news");
   await loadMore(list, more);
@@ -281,7 +281,6 @@ async function loadMore(list, more) {
   try {
     const data = await (await api(`/api/articles?filtre=${filtre}&limit=40&offset=${feedState.offset}`)).json();
     feedState.offset += data.articles.length;
-    feedState.seuil = data.seuil;
     for (const a of data.articles) {
       if (a.seen) seenIds.add(a.id);
       const d = parseDate(a.ingested_at);
@@ -300,18 +299,34 @@ async function loadMore(list, more) {
   }
 }
 
+// Importance d'un coup d'œil : rouge > orange > jaune > blanc
+function importance(score) {
+  if (score >= 8.5) return { cls: "imp-red", label: "Majeure" };
+  if (score >= 7.5) return { cls: "imp-orange", label: "Importante" };
+  if (score >= 6.5) return { cls: "imp-yellow", label: "Notable" };
+  return { cls: "imp-white", label: "Secondaire" };
+}
+
 function renderCard(a, d) {
   const details = h("div", { class: "details", hidden: true });
-  const toggle = h("button", { class: "chip", onclick: () => toggleDetails(a, details, toggle) }, "Lire plus");
+  const toggle = h("button", { class: "chip", onclick: () => toggleDetails(a, details, toggle) }, "Plus");
+  const imp = importance(a.score ?? 0);
+  const thumb = a.image
+    ? h("img", { class: "thumb", src: a.image, alt: "", loading: "lazy", referrerpolicy: "no-referrer",
+        onerror: (e) => e.target.replaceWith(h("div", { class: "thumb ph" }, a.source.slice(0, 1))) })
+    : h("div", { class: "thumb ph" }, a.source.slice(0, 1));
   return h("article", { class: "card" + (a.seen ? " seen" : ""), "data-card": a.id },
-    h("div", { class: "meta" },
-      h("span", { class: "dot", title: "Pas encore vu" }),
-      h("span", { class: "score" + (a.score >= feedState.seuil ? "" : " low") }, (a.score ?? 0).toFixed(1)),
-      h("span", { class: "source" }, a.source),
-      d ? h("span", {}, "· " + timeLabel(d)) : null,
+    h("div", { class: "card-main", onclick: (e) => { if (!e.target.closest("button")) toggleDetails(a, details, toggle); } },
+      h("div", { class: "card-text" },
+        h("div", { class: "meta" },
+          h("span", { class: `imp ${imp.cls}`, title: imp.label }),
+          h("span", { class: "source" }, a.source),
+          d ? h("span", {}, "· " + timeLabel(d)) : null,
+        ),
+        h("h2", {}, a.titre),
+      ),
+      thumb,
     ),
-    h("h2", {}, a.titre),
-    a.chapo ? h("p", { class: "chapo-short" }, a.chapo) : null,
     h("div", { class: "card-actions" },
       toggle,
       h("button", { class: "chip", onclick: () => listenArticle(a) }, "▶ Écouter"),
@@ -324,7 +339,7 @@ function renderCard(a, d) {
 async function toggleDetails(a, details, toggle) {
   if (!details.hidden) {
     details.hidden = true;
-    toggle.textContent = "Lire plus";
+    toggle.textContent = "Plus";
     return;
   }
   details.hidden = false;
@@ -346,7 +361,7 @@ function renderBrief(a, full) {
   const b = full.brief || {};
   const section = (title, ...content) => h("section", {}, h("h3", {}, title), ...content);
   return [
-    b.chapo && b.chapo !== a.chapo ? h("p", { class: "lead" }, b.chapo) : null,
+    h("p", { class: "lead" }, b.chapo || a.chapo),
     h("div", { class: "prose" }, (b.recit?.length ? b.recit : [full.factual_core || ""]).map((p) => h("p", {}, p))),
     b.pourquoi_ca_compte ? section("Pourquoi ça compte", h("div", { class: "prose" }, h("p", {}, b.pourquoi_ca_compte))) : null,
     section("Version de la partie mise en cause",

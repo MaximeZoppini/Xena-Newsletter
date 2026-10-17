@@ -4,7 +4,7 @@ import time
 
 from analyzer import NewsAnalyzer
 from briefing import Briefer
-from config import DATABASE_PATH, MIN_INTEREST_SCORE, POLL_INTERVAL_SECONDS, WEB_HOST, WEB_PORT
+from config import FEEDS, DATABASE_PATH, MIN_INTEREST_SCORE, POLL_INTERVAL_SECONDS, WEB_HOST, WEB_PORT
 from sources import get_all_new_candidates
 from storage import Storage
 from web import start_web_server
@@ -45,7 +45,27 @@ def run_pipeline_cycle(storage: Storage, analyzer: NewsAnalyzer, briefer: Briefe
         if score >= MIN_INTEREST_SCORE:
             # Fiche + version audio courte prêtes d'avance : le flash « Ce que j'ai raté » démarre sans attente
             briefer.get_or_create_brief(item["id"])
+            briefer.ensure_image(item["id"])
             briefer.get_or_create_short_audio(item["id"])
+
+
+def rescore(storage: Storage, analyzer: NewsAnalyzer, briefer: Briefer, days: int):
+    """Applique la grille de notation actuelle aux articles déjà en base."""
+    bias = {f["name"]: f["known_bias"] for f in FEEDS}
+    rows = storage.list_recent(min_score=0.0, hours=days * 24, limit=5000)
+    logger.info(f"Nouvelle notation de {len(rows)} article(s)...")
+    for r in rows:
+        item = {"id": r["id"], "title": r["title"], "url": r["url"], "source": r["source"],
+                "summary": r["raw_summary"] or "", "known_bias": bias.get(r["source"], "Non précisé")}
+        analysis = analyzer.analyze(item)
+        if not analysis:
+            continue
+        storage.save_analysis(r["id"], analysis)
+        if analysis.get("global_score", 0.0) >= MIN_INTEREST_SCORE:
+            briefer.get_or_create_brief(r["id"])
+            briefer.ensure_image(r["id"])
+            briefer.get_or_create_short_audio(r["id"])
+        logger.info(f"{analysis.get('global_score', 0.0):>4} | {analysis.get('titre_fr') or r['title']}")
 
 
 def main():
@@ -54,6 +74,8 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Exécute un cycle sans rien enregistrer")
     parser.add_argument("--backfill-days", type=int, metavar="N",
                         help="Prépare fiches et versions audio courtes des news importantes des N derniers jours puis quitte")
+    parser.add_argument("--rescore-days", type=int, metavar="N",
+                        help="Re-note les articles des N derniers jours avec la grille actuelle puis quitte")
     parser.add_argument("--once", action="store_true", help="Exécute un seul cycle puis quitte")
     args = parser.parse_args()
 
@@ -64,6 +86,10 @@ def main():
     if args.test_sources:
         candidates = get_all_new_candidates(storage)
         print(f"Trouvé {len(candidates)} items bruts.")
+        return
+
+    if args.rescore_days:
+        rescore(storage, analyzer, briefer, args.rescore_days)
         return
 
     if args.backfill_days:
