@@ -34,86 +34,39 @@ MIN_INTEREST_SCORE = float(os.getenv("MIN_INTEREST_SCORE", "7"))
 WEB_HOST = os.getenv("WEB_HOST", "127.0.0.1")
 WEB_PORT = int(os.getenv("WEB_PORT", "8080"))
 
-# Flux surveillés : d'abord les avancées tech & science, puis l'investigation
+# Flux surveillés : trois thèmes seulement — géopolitique majeure, avancées technologiques, business.
+# La notation (analyzer.py) écarte ensuite tout ce qui sort de ces thèmes.
 def _feed(name, url, category, known_bias):
     return {"name": name, "url": url, "category": category, "known_bias": known_bias}
 
 
 FEEDS = [
-    _feed("The Verge", "https://www.theverge.com/rss/index.xml", "tech", "Média tech grand public américain, produits et industrie"),
-    _feed("TechCrunch", "https://techcrunch.com/feed/", "tech", "Média tech américain axé startups, financements et lancements"),
-    _feed("MIT Technology Review", "https://www.technologyreview.com/feed/", "science_tech", "Revue du MIT, technologies émergentes et leurs enjeux"),
-    _feed("Electrek", "https://electrek.co/feed/", "mobilite", "Média spécialisé véhicules électriques, Tesla et énergie, plutôt enthousiaste"),
-    _feed("Google Blog", "https://blog.google/rss/", "annonce_officielle", "Blog officiel de Google : communication de l'entreprise"),
-    _feed("Google Research", "https://research.google/blog/rss/", "recherche", "Blog officiel de la recherche Google : communication de l'entreprise"),
-    _feed("Google DeepMind", "https://deepmind.google/blog/rss.xml", "recherche", "Blog officiel de DeepMind : communication de l'entreprise"),
-    _feed("OpenAI", "https://openai.com/news/rss.xml", "annonce_officielle", "Actualités officielles d'OpenAI : communication de l'entreprise"),
-    _feed("Quanta Magazine", "https://www.quantamagazine.org/feed/", "science", "Magazine de vulgarisation scientifique de référence (Fondation Simons)"),
-    _feed("IEEE Spectrum", "https://spectrum.ieee.org/feeds/feed.rss", "ingenierie", "Magazine de l'IEEE, ingénierie et technologies"),
-    _feed("Nature", "https://www.nature.com/nature.rss", "science", "Revue scientifique de référence (articles et actualités)"),
-    _feed("SpaceNews", "https://spacenews.com/feed/", "spatial", "Média spécialisé de l'industrie spatiale"),
-    _feed("Numerama", "https://www.numerama.com/feed/", "tech", "Média tech et sciences français"),
-    _feed("Frandroid", "https://www.frandroid.com/feed", "tech", "Média tech français, produits et mobilité électrique"),
-    {
-        "name": "Mediapart",
-        "url": "https://www.mediapart.fr/articles/feed",
-        "category": "investigation",
-        "known_bias": "Média d'investigation indépendant, critique du pouvoir"
-    },
-    {
-        "name": "Disclose",
-        "url": "https://disclose.ngo/feed",
-        "category": "investigation",
-        "known_bias": "ONG de journalisme d'investigation, axé droits humains et environnement"
-    },
-    {
-        "name": "Reporterre",
-        "url": "https://reporterre.net/spip.php?page=backend",
-        "category": "ecologie",
-        "known_bias": "Média indépendant écologiste"
-    },
-    {
-        "name": "ProPublica",
-        "url": "https://www.propublica.org/feeds/propublica/main",
-        "category": "investigation",
-        "known_bias": "Journalisme d'investigation à but non lucratif américain"
-    },
-    {
-        "name": "404 Media",
-        "url": "https://www.404media.co/rss/",
-        "category": "tech_cyber",
-        "known_bias": "Média tech indépendant axé surveillance, cyber et hacking"
-    },
-    {
-        "name": "Ars Technica",
-        "url": "https://feeds.arstechnica.com/arstechnica/index",
-        "category": "tech",
-        "known_bias": "Média tech de référence, focus réglementaire et technique"
-    },
-    {
-        "name": "BleepingComputer",
-        "url": "https://www.bleepingcomputer.com/feed/",
-        "category": "cyber",
-        "known_bias": "Spécialisé cybersécurité, vulnérabilités et menaces"
-    },
-    {
-        "name": "Alignment Forum",
-        "url": "https://www.alignmentforum.org/feed.xml",
-        "category": "ai_safety",
-        "known_bias": "Plateforme de recherche & whistleblowing en sécurité AGI (DeepMind, Anthropic, OpenAI)"
-    },
-    {
-        "name": "The Guardian Technology",
-        "url": "https://www.theguardian.com/technology/rss",
-        "category": "tech_investigation",
-        "known_bias": "Média international de référence, enquêtes Big Tech et IA"
-    },
-    {
-        "name": "EFF",
-        "url": "https://www.eff.org/rss/updates.xml",
-        "category": "digital_rights",
-        "known_bias": "ONG pionnière sur les libertés numériques, surveillance et chiffrement"
-    }
+    # --- Avancées technologiques et scientifiques
+    _feed("Google Research", "https://research.google/blog/rss/", "tech", "Blog officiel de la recherche Google : communication de l'entreprise"),
+    _feed("Google DeepMind", "https://deepmind.google/blog/rss.xml", "tech", "Blog officiel de DeepMind : communication de l'entreprise"),
+    _feed("OpenAI", "https://openai.com/news/rss.xml", "tech", "Actualités officielles d'OpenAI : communication de l'entreprise"),
+    _feed("MIT Technology Review", "https://www.technologyreview.com/feed/", "tech", "Revue du MIT, technologies émergentes et leurs enjeux"),
+    _feed("Ars Technica", "https://feeds.arstechnica.com/arstechnica/index", "tech", "Média tech de référence, focus technique et réglementaire"),
+    _feed("IEEE Spectrum", "https://spectrum.ieee.org/feeds/feed.rss", "tech", "Magazine de l'IEEE, ingénierie et technologies"),
+    _feed("Quanta Magazine", "https://www.quantamagazine.org/feed/", "tech", "Magazine de vulgarisation scientifique de référence (Fondation Simons)"),
+    _feed("Nature", "https://www.nature.com/nature.rss", "tech", "Revue scientifique de référence (articles et actualités)"),
+    _feed("Phys.org Quantique", "https://phys.org/rss-feed/physics-news/quantum-physics/", "tech", "Agrégateur de communiqués de recherche en physique quantique"),
+    _feed("SpaceNews", "https://spacenews.com/feed/", "tech", "Média spécialisé de l'industrie spatiale"),
+    _feed("Teslarati", "https://www.teslarati.com/feed/", "tech", "Média centré sur Tesla et SpaceX, très favorable à Elon Musk"),
+    # --- Géopolitique
+    _feed("BBC World", "https://feeds.bbci.co.uk/news/world/rss.xml", "geopolitique", "Service public britannique, international"),
+    _feed("Le Monde International", "https://www.lemonde.fr/international/rss_full.xml", "geopolitique", "Quotidien français de référence, rubrique internationale"),
+    _feed("Financial Times Monde", "https://www.ft.com/world?format=rss", "geopolitique", "Quotidien économique britannique de référence, international"),
+    _feed("New York Times Monde", "https://rss.nytimes.com/services/xml/rss/nyt/World.xml", "geopolitique", "Quotidien américain de référence, international, centre gauche"),
+    _feed("Foreign Policy", "https://foreignpolicy.com/feed/", "geopolitique", "Revue américaine de politique étrangère et d'analyse"),
+    _feed("Le Grand Continent", "https://legrandcontinent.eu/fr/feed/", "geopolitique", "Revue européenne de géopolitique, perspective pro-européenne"),
+    _feed("Politico Europe", "https://www.politico.eu/feed/", "geopolitique", "Média politique centré sur l'UE et Bruxelles"),
+    # --- Business
+    _feed("Financial Times Entreprises", "https://www.ft.com/companies?format=rss", "business", "Quotidien économique britannique de référence, entreprises"),
+    _feed("The Economist Business", "https://www.economist.com/business/rss.xml", "business", "Hebdomadaire britannique libéral, analyse économique"),
+    _feed("New York Times Business", "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml", "business", "Quotidien américain de référence, économie et entreprises"),
+    _feed("CNBC", "https://www.cnbc.com/id/100003114/device/rss/rss.html", "business", "Chaîne économique américaine, marchés et entreprises"),
+    _feed("TechCrunch", "https://techcrunch.com/feed/", "business", "Média tech américain axé startups, financements et industrie"),
 ]
 
 # API Hacker News

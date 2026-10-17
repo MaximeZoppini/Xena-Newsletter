@@ -34,21 +34,21 @@ class TypeSafeEvaluator:
             "questions": {
                 "is_investigation_or_scoop": {
                     "type": "noul",
-                    "instructions": "Is this reporting something genuinely new and significant: a technological or scientific breakthrough, a major product or vehicle unveiling, a new frontier AI model, a historic space mission, a published scientific discovery, or a major investigative revelation, rather than routine updates, minor features or business-as-usual news?"
+                    "instructions": "Is this a genuinely significant development in one of these three areas only: (1) major geopolitics (wars, ceasefires, sanctions, international agreements, power shifts between nations), (2) technological or scientific breakthroughs (quantum, frontier AI, revolutionary robots, autonomous vehicles or vehicles with unprecedented capabilities unveiled live such as a new Tesla, historic space missions, published discoveries), (3) major business moves (mega-mergers, central bank decisions, trade wars, industry-reshaping deals)? Answer no for conventional new car models (e.g. a new SUV, even powerful or electric), gadgets, routine politics, culture, sports, lifestyle or local news."
                 },
                 "is_opinion_or_pr": {
                     "type": "noul",
-                    "instructions": "Is this primarily an opinion column, partisan rant, sponsored content, deal/promo, buying guide or hands-on product review (not a product unveiling or launch announcement)?"
+                    "instructions": "Is this primarily an opinion column, partisan rant, sponsored content, deal/promo, buying guide, hands-on product review, lifestyle, culture or sports piece?"
                 },
                 "systemic_importance": {
                     "type": "score",
                     "instructions": "Rate the systemic impact and societal or technical gravity of this development.",
                     "criteria": [
-                        "Trivial routine update, promo or product review",
-                        "Minor company announcement, funding round or standard commentary",
-                        "Notable technical, scientific, legal or economic development",
-                        "Major unveiling, technological breakthrough or major investigative revelation",
-                        "Historic breakthrough or event that changes what is possible"
+                        "Trivial, off-topic (culture, sports, lifestyle, gadgets) or routine",
+                        "Minor company, political or product news",
+                        "Notable geopolitical, technological or economic development",
+                        "Major geopolitical event, technological breakthrough or industry-reshaping business move",
+                        "Historic event that changes the world order, an industry or what is technically possible"
                     ]
                 }
             }
