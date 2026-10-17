@@ -361,7 +361,21 @@ function renderBrief(a, full) {
 
 // ------------------------------------------------------------------ discussion
 // Une seule conversation, qui connaît toutes les news de la semaine ; on peut la centrer sur un article.
-const chat = { focus: null, history: store.get("xena-chat", []), lastAnswer: "" };
+// L'historique vit en base côté serveur ; le navigateur ne garde que l'identifiant de la conversation en cours.
+const newConversationId = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
+const chat = { id: store.get("xena-conv", null) || newConversationId(), focus: null, history: [], loaded: false, lastAnswer: "" };
+store.set("xena-conv", chat.id);
+
+async function loadConversation() {
+  if (chat.loaded) return;
+  try {
+    const data = await (await api(`/api/conversations/${chat.id}`)).json();
+    chat.history = data.messages;
+    chat.loaded = true;
+    const last = [...chat.history].reverse().find((t) => t.role === "model");
+    if (last) chat.lastAnswer = last.text;
+  } catch { /* hors ligne : on repart d'une conversation vide à l'écran */ }
+}
 
 function setFocus(article) {
   chat.focus = article || null;
@@ -369,12 +383,13 @@ function setFocus(article) {
   $("#focus-title").textContent = article ? article.titre : "";
 }
 
-function openChat(article, initialQuestion) {
+async function openChat(article, initialQuestion) {
   unlockAudio();
   if (article) { setFocus(article); markSeen(article.id); }
-  renderChatLog();
   $("#chat").hidden = false;
-  if (initialQuestion) sendQuestion({ text: initialQuestion });
+  await loadConversation();
+  renderChatLog();
+  if (initialQuestion) sendQuestion(initialQuestion);
 }
 
 function closeChat() {
@@ -412,29 +427,26 @@ function renderMsg(turn) {
 
 function setStatus(text) { $("#chat-status").textContent = text || ""; }
 
-async function sendQuestion({ text, audioB64 }) {
+async function sendQuestion(text, pending) {
   if (queue.kind === "chat") stopAll();
-  const pending = { role: "user", text: text || "🎙 …" };
-  chat.history.push(pending);
-  renderChatLog();
+  if (!pending) {
+    pending = { role: "user", text };
+    chat.history.push(pending);
+    renderChatLog();
+  }
   const t0 = Date.now();
   setStatus("…");
   const timer = setInterval(() => setStatus(`… ${Math.round((Date.now() - t0) / 1000)} s`), 1000);
   $("#mic").disabled = true;
   try {
-    const history = chat.history.slice(0, -1).map(({ role, text }) => ({ role, text }));
-    const resp = await postJson("/api/chat", { article_id: chat.focus?.id || "", history, text, audio_b64: audioB64 });
-    const { question, answer, queries, sources } = await resp.json();
-    pending.text = question || pending.text;
+    const resp = await postJson("/api/chat", { conversation_id: chat.id, article_id: chat.focus?.id || "", text });
+    const { answer, queries, sources } = await resp.json();
     chat.history.push({ role: "model", text: answer, queries, sources });
-    store.set("xena-chat", chat.history.slice(-40));
     renderChatLog();
     setStatus("");
     speak(answer);
   } catch (e) {
-    chat.history.pop();
-    renderChatLog();
-    setStatus("Erreur : " + e.message);
+    setStatus("⚠ " + e.message);
   } finally {
     clearInterval(timer);
     $("#mic").disabled = false;
@@ -482,50 +494,95 @@ function speakBrowser(parts) {
   });
 }
 
-// --- micro : enregistrement libre (pas de coupure automatique), envoyé en WAV 16 kHz
+// --- micro : enregistrement libre (pas de coupure automatique)
+// MediaRecorder donne le format natif du navigateur (mp4/AAC sur Safari, webm/Opus sur Chrome), que Gemini lit directement.
+// Repli en WAV via Web Audio pour les navigateurs sans MediaRecorder.
 const recorder = {
-  active: false, stream: null, ctx: null, node: null, chunks: [], startedAt: 0, timer: null,
+  active: false, stream: null, media: null, chunks: [], mime: "", startedAt: 0, timer: null, ctx: null, node: null,
 
   async start() {
-    // Le contexte audio est créé avant tout await, pendant le geste (exigence de Safari iOS)
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    this.ctx = new Ctx();
-    const resumed = this.ctx.resume();
-    try {
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
-      });
-    } catch (e) {
-      this.ctx.close();
-      throw e;
-    }
-    await resumed;
-    const source = this.ctx.createMediaStreamSource(this.stream);
-    this.node = this.ctx.createScriptProcessor(4096, 1, 1);
-    const mute = this.ctx.createGain();
-    mute.gain.value = 0;
+    this.stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
+    });
     this.chunks = [];
-    this.node.onaudioprocess = (e) => this.chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
-    source.connect(this.node);
-    this.node.connect(mute);
-    mute.connect(this.ctx.destination);
+    this.peak = 0;
+    this._meter();
+    if (window.MediaRecorder) {
+      const type = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"].find((t) => MediaRecorder.isTypeSupported?.(t));
+      this.media = new MediaRecorder(this.stream, type ? { mimeType: type } : undefined);
+      this.mime = this.media.mimeType || type || "audio/mp4";
+      this.media.ondataavailable = (e) => { if (e.data?.size) this.chunks.push(e.data); };
+      this.media.start(1000);
+    } else {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      this.ctx = new Ctx();
+      await this.ctx.resume();
+      const source = this.ctx.createMediaStreamSource(this.stream);
+      this.node = this.ctx.createScriptProcessor(4096, 1, 1);
+      const mute = this.ctx.createGain();
+      mute.gain.value = 0;
+      this.node.onaudioprocess = (e) => this.chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+      source.connect(this.node);
+      this.node.connect(mute);
+      mute.connect(this.ctx.destination);
+      this.mime = "audio/wav";
+    }
     this.active = true;
     this.startedAt = Date.now();
   },
 
+  _meter() {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      this.meterCtx = new Ctx();
+      this.meterCtx.resume();
+      const analyser = this.meterCtx.createAnalyser();
+      analyser.fftSize = 1024;
+      this.meterCtx.createMediaStreamSource(this.stream).connect(analyser);
+      const buf = new Float32Array(analyser.fftSize);
+      this.meterTimer = setInterval(() => {
+        analyser.getFloatTimeDomainData(buf);
+        for (const x of buf) this.peak = Math.max(this.peak, Math.abs(x));
+      }, 100);
+    } catch { this.peak = -1; } // mesure impossible : on n'en tient pas compte
+  },
+
   _release() {
+    clearInterval(this.meterTimer);
+    this.meterCtx?.close();
+    this.meterCtx = null;
     this.active = false;
     if (this.node) this.node.onaudioprocess = null;
     this.stream?.getTracks().forEach((t) => t.stop());
     this.ctx?.close();
+    this.ctx = this.node = null;
   },
 
-  cancel() { this._release(); this.chunks = []; updateMic(); },
-
-  stop() {
-    const rate = this.ctx.sampleRate;
+  cancel() {
+    if (this.media && this.media.state !== "inactive") this.media.stop();
+    this.media = null;
     this._release();
-    return encodeWav(this.chunks, rate, 16000);
+    this.chunks = [];
+    updateMic();
+  },
+
+  // -> Promise<{ blob, mime }>
+  stop() {
+    if (this.media) {
+      const media = this.media;
+      this.media = null;
+      return new Promise((resolve) => {
+        media.onstop = () => {
+          this._release();
+          resolve({ blob: new Blob(this.chunks, { type: this.mime }), mime: this.mime });
+        };
+        media.stop();
+      });
+    }
+    const rate = this.ctx.sampleRate;
+    const wav = encodeWav(this.chunks, rate, 16000);
+    this._release();
+    return Promise.resolve({ blob: new Blob([wav], { type: "audio/wav" }), mime: "audio/wav" });
   },
 };
 
@@ -544,7 +601,6 @@ function encodeWav(chunks, inRate, outRate) {
   v.setUint32(24, outRate, true); v.setUint32(28, outRate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
   str(36, "data"); v.setUint32(40, outLen * 2, true);
   for (let i = 0; i < outLen; i++) {
-    // moyenne sur la fenêtre (anti-repliement simple)
     const start = Math.floor(i * ratio), end = Math.min(Math.floor((i + 1) * ratio), total);
     let sum = 0;
     for (let j = start; j < end; j++) sum += input[j];
@@ -554,10 +610,13 @@ function encodeWav(chunks, inRate, outRate) {
   return new Uint8Array(buf);
 }
 
-function toBase64(bytes) {
-  let bin = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-  return btoa(bin);
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
 }
 
 function updateMic() {
@@ -590,10 +649,38 @@ async function onMic() {
   } else {
     clearInterval(recorder.timer);
     const seconds = (Date.now() - recorder.startedAt) / 1000;
-    const wav = recorder.stop();
+    const { blob, mime } = await recorder.stop();
     updateMic();
     if (seconds < 0.8) return;
-    sendQuestion({ audioB64: toBase64(wav) });
+    if (!blob.size || recorder.peak === 0) { setStatus("⚠ micro muet"); return; }
+    // 1) transcription rapide : la question s'affiche tout de suite
+    const pending = { role: "user", text: "🎙 …" };
+    chat.history.push(pending);
+    renderChatLog();
+    $("#mic").disabled = true;
+    setStatus("…");
+    let text = "";
+    try {
+      const resp = await postJson("/api/transcribe", { audio_b64: await blobToBase64(blob), mime });
+      text = (await resp.json()).text;
+    } catch (e) {
+      chat.history.pop();
+      renderChatLog();
+      setStatus("⚠ " + e.message);
+      $("#mic").disabled = false;
+      return;
+    }
+    if (!text) {
+      chat.history.pop();
+      renderChatLog();
+      setStatus("🎙 rien entendu");
+      $("#mic").disabled = false;
+      return;
+    }
+    pending.text = text;
+    renderChatLog();
+    // 2) réponse
+    sendQuestion(text, pending);
   }
 }
 
@@ -623,14 +710,16 @@ function initChat() {
     if (!text) return;
     input.value = "";
     unlockAudio();
-    sendQuestion({ text });
+    sendQuestion(text);
   });
   $("#stop-voice").addEventListener("click", () => { if (queue.kind === "chat") stopAll(); window.speechSynthesis?.cancel(); });
   $("#replay").addEventListener("click", () => { unlockAudio(); if (chat.lastAnswer) speak(chat.lastAnswer); });
   $("#clear-chat").addEventListener("click", () => {
     if (queue.kind === "chat") stopAll();
+    chat.id = newConversationId();
+    store.set("xena-conv", chat.id);
     chat.history = [];
-    store.set("xena-chat", []);
+    chat.loaded = true;
     setFocus(null);
     renderChatLog();
   });
@@ -643,8 +732,6 @@ function initChat() {
     }
     window.open("https://gemini.google.com/app", "_blank", "noopener");
   });
-  const last = [...chat.history].reverse().find((t) => t.role === "model");
-  if (last) chat.lastAnswer = last.text;
 }
 
 // ------------------------------------------------------------------ démarrage

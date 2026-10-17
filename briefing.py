@@ -334,26 +334,45 @@ Concepts déjà expliqués :
             pass
         return {"queries": queries, "sources": sources[:8]}
 
-    def chat(self, article_id: str, history: List[Dict[str, str]], text: str = "",
-             audio_wav: Optional[bytes] = None) -> Dict[str, Any]:
+    def transcribe(self, audio: bytes, mime_type: str) -> str:
+        """Question vocale -> texte (rapide, Flash). Chaîne vide si rien d'audible."""
+        if not self.client:
+            raise RuntimeError("Clé Gemini absente")
+        from google.genai import types
+        resp = self.client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=[types.Part.from_bytes(data=audio, mime_type=mime_type),
+                      "Cet enregistrement vient d'un micro : la personne pose une question à voix haute. "
+                      "Indique d'abord s'il contient de la parole humaine réellement audible. "
+                      "Si oui, transcris exactement ce qui est dit, en français, sans horodatage, sans guillemets, "
+                      "sans rien ajouter. N'invente jamais de texte : un silence ou un bruit de fond = pas de parole."],
+            config=types.GenerateContentConfig(
+                temperature=0,
+                response_mime_type="application/json",
+                response_schema={"type": "object",
+                                 "properties": {"parole_audible": {"type": "boolean"}, "transcription": {"type": "string"}},
+                                 "required": ["parole_audible", "transcription"]},
+            ),
+        )
+        try:
+            data = json.loads(resp.text or "{}")
+        except json.JSONDecodeError:
+            return ""
+        text = re.sub(r"\b\d{1,2}:\d{2}\b", "", data.get("transcription") or "").strip() if data.get("parole_audible") else ""
+        return re.sub(r"\s{2,}", " ", text)
+
+    def chat(self, conversation_id: str, article_id: str, text: str) -> Dict[str, Any]:
         if not self.client:
             raise RuntimeError("Clé Gemini absente")
         from google.genai import types
         system = CHAT_PROMPT.replace("{digest}", self._digest()).replace("{focus}", self._focus(article_id))
 
         contents = []
-        for turn in history[-20:]:
-            role = "model" if turn.get("role") == "model" else "user"
-            if turn.get("text"):
-                contents.append(types.Content(role=role, parts=[types.Part.from_text(text=turn["text"])]))
-
-        if audio_wav:
-            system += ("\n\nLe dernier message est une question VOCALE. Commence ta sortie par une ligne "
-                       "\"Q: \" suivie de la transcription fidèle de la question, puis une ligne vide, puis ta réponse.")
-            parts = [types.Part.from_bytes(data=audio_wav, mime_type="audio/wav")]
-        else:
-            parts = [types.Part.from_text(text=text)]
-        contents.append(types.Content(role="user", parts=parts))
+        for turn in self.storage.get_messages(conversation_id)[-20:]:
+            role = "model" if turn["role"] == "model" else "user"
+            contents.append(types.Content(role=role, parts=[types.Part.from_text(text=turn["text"])]))
+        contents.append(types.Content(role="user", parts=[types.Part.from_text(text=text)]))
+        self.storage.add_message(conversation_id, "user", text, article_id)
 
         resp = self._generate_chat(contents, system)
         grounding = self._grounding(resp)
@@ -369,14 +388,8 @@ Concepts déjà expliqués :
                 resp, grounding = resp2, g2
 
         out = (resp.text or "").strip()
-        question = text
-        if audio_wav:
-            m = re.match(r"^\s*Q\s*:\s*(.+?)\n(.*)$", out, re.S)
-            if m:
-                question, out = m.group(1).strip(), m.group(2).strip()
-            else:
-                question = "(question vocale)"
         # Filet de sécurité pour la lecture à voix haute
         out = re.sub(r"[*#_`]+", "", out)
         out = re.sub(r"https?://\S+", "", out).strip()
-        return {"question": question, "answer": out, **grounding}
+        self.storage.add_message(conversation_id, "model", out, article_id, grounding["queries"], grounding["sources"])
+        return {"question": text, "answer": out, **grounding}

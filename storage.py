@@ -127,6 +127,28 @@ class Storage:
                     seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            # Historique complet des conversations avec Xena
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS conversations (
+                    id TEXT PRIMARY KEY,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id TEXT NOT NULL,
+                    role TEXT NOT NULL, -- 'user' ou 'model'
+                    text TEXT NOT NULL,
+                    article_id TEXT,
+                    queries_json TEXT,
+                    sources_json TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_articles_ingested ON articles(ingested_at)")
             conn.commit()
 
@@ -249,6 +271,33 @@ class Storage:
         with self._get_connection() as conn:
             conn.executemany("INSERT OR IGNORE INTO seen (article_id) VALUES (?)", [(i,) for i in article_ids])
             conn.commit()
+
+    def add_message(self, conversation_id: str, role: str, text: str, article_id: str = "",
+                    queries: Optional[List[str]] = None, sources: Optional[List[Dict[str, str]]] = None):
+        import json
+        with self._get_connection() as conn:
+            conn.execute("""
+                INSERT INTO conversations (id) VALUES (?)
+                ON CONFLICT(id) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
+            """, (conversation_id,))
+            conn.execute("""
+                INSERT INTO messages (conversation_id, role, text, article_id, queries_json, sources_json)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (conversation_id, role, text, article_id or None,
+                  json.dumps(queries or [], ensure_ascii=False), json.dumps(sources or [], ensure_ascii=False)))
+            conn.commit()
+
+    def get_messages(self, conversation_id: str) -> List[Dict[str, Any]]:
+        import json
+        with self._get_connection() as conn:
+            rows = conn.execute("""
+                SELECT role, text, article_id, queries_json, sources_json, created_at
+                FROM messages WHERE conversation_id = ? ORDER BY id
+            """, (conversation_id,)).fetchall()
+        return [{
+            "role": r["role"], "text": r["text"], "article_id": r["article_id"], "created_at": r["created_at"],
+            "queries": json.loads(r["queries_json"] or "[]"), "sources": json.loads(r["sources_json"] or "[]"),
+        } for r in rows]
 
     def save_brief(self, article_id: str, brief_json: str, source_text: str, model: str):
         with self._get_connection() as conn:

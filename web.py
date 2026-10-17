@@ -20,6 +20,8 @@ logger = logging.getLogger("web")
 
 MAX_BODY = 25 * 1024 * 1024  # ~10 min d'audio WAV 16 kHz
 ARTICLE_RE = re.compile(r"^/api/articles/([0-9a-f]{16})(/audio)?$")
+CONV_RE = re.compile(r"^/api/conversations/([0-9a-zA-Z-]{8,64})$")
+AUDIO_TYPES = {"audio/mp4", "audio/aac", "audio/webm", "audio/ogg", "audio/wav", "audio/mpeg"}
 
 
 def _article_card(row: dict) -> dict:
@@ -112,6 +114,9 @@ class Handler(BaseHTTPRequestHandler):
                     "framing": row.get("framing_detected"),
                     "source_quote": row.get("source_quote"),
                 })
+            c = CONV_RE.match(url.path)
+            if c:
+                return self._json(200, {"messages": self.storage.get_messages(c.group(1))})
             if url.path == "/api/flash":
                 rows = self.storage.list_recent(min_score=MIN_INTEREST_SCORE, hours=72, unseen_only=True, limit=20)
                 return self._json(200, {"articles": [_article_card(r) for r in rows]})
@@ -141,20 +146,33 @@ class Handler(BaseHTTPRequestHandler):
                 ids = [i for i in body.get("ids", []) if isinstance(i, str) and re.fullmatch(r"[0-9a-f]{16}", i)]
                 self.storage.mark_seen(ids)
                 return self._json(200, {"ok": True})
+            if url.path == "/api/transcribe":
+                mime = (body.get("mime") or "").split(";")[0].strip()
+                if mime not in AUDIO_TYPES or not body.get("audio_b64"):
+                    return self._json(400, {"error": f"format audio non pris en charge ({mime})"})
+                audio = base64.b64decode(body["audio_b64"])
+                logger.info(f"🎙 Question vocale reçue : {len(audio) // 1024} Ko ({mime})")
+                return self._json(200, {"text": self.briefer.transcribe(audio, mime)})
             if url.path == "/api/chat":
                 article_id = body.get("article_id") or ""
+                conversation_id = body.get("conversation_id") or ""
                 if article_id and (not re.fullmatch(r"[0-9a-f]{16}", article_id) or not self.storage.get_article(article_id)):
                     return self._json(404, {"error": "article introuvable"})
-                audio = base64.b64decode(body["audio_b64"]) if body.get("audio_b64") else None
+                if not re.fullmatch(r"[0-9a-zA-Z-]{8,64}", conversation_id):
+                    return self._json(400, {"error": "conversation invalide"})
                 text = (body.get("text") or "").strip()
-                if not audio and not text:
+                if not text:
                     return self._json(400, {"error": "question vide"})
-                result = self.briefer.chat(article_id, body.get("history") or [], text=text, audio_wav=audio)
-                return self._json(200, result)
+                return self._json(200, self.briefer.chat(conversation_id, article_id, text))
             return self._json(404, {"error": "introuvable"})
+        except (BrokenPipeError, ConnectionResetError):
+            logger.info(f"POST {url.path} : le navigateur a fermé la connexion avant la réponse")
         except Exception as e:
             logger.error(f"POST {url.path} : {e}", exc_info=True)
-            return self._json(500, {"error": str(e)})
+            try:
+                return self._json(500, {"error": str(e)})
+            except (BrokenPipeError, ConnectionResetError):
+                pass
 
 
 def start_web_server(storage: Storage, briefer: Briefer, host: str, port: int) -> ThreadingHTTPServer:
