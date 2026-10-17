@@ -81,7 +81,7 @@ Si la recherche ne donne rien de fiable, dis-le explicitement. Tu peux te passer
 - Aucun markdown, aucune liste à puces, aucun astérisque, aucune URL, aucun emoji.
 - Phrases courtes. Paragraphes courts (2-3 phrases) séparés par une ligne vide : chaque paragraphe est une respiration.
 - En général 60 à 160 mots. Plus long seulement si on te le demande ou si le sujet l'exige vraiment.
-- Tu peux finir par une courte proposition d'approfondir un point précis, mais pas systématiquement.
+- Arrête-toi quand tu as répondu : pas de conclusion, pas de résumé final, pas de proposition d'approfondir, pas de question de relance.
 
 ### LES NEWS RÉCENTES DE TON LECTEUR (7 derniers jours, les plus importantes)
 {digest}
@@ -239,7 +239,7 @@ VERSION DE LA PARTIE MISE EN CAUSE (analyse préalable) : {art.get('counter_view
             if not brief:
                 return None
             script = brief.get("script_audio") or " ".join([brief.get("chapo", "")] + brief.get("recit", []))
-            audio = self.synthesize(f"{brief.get('titre', '')}.\n\n{script}")
+            audio = self.synthesize(script)
             if audio:
                 path.write_bytes(audio)
             return audio
@@ -253,8 +253,8 @@ VERSION DE LA PARTIE MISE EN CAUSE (analyse préalable) : {art.get('counter_view
                 self.storage.set_image(article_id, image)
 
     def get_or_create_short_audio(self, article_id: str) -> Optional[bytes]:
-        """Version courte lue dans le flash « Ce que j'ai raté » : titre + l'essentiel."""
-        path = Path(AUDIO_DIR) / f"{article_id}-court.wav"
+        """Version courte lue dans le flash « Ce que j'ai raté » : l'essentiel en 1-2 phrases, rien d'autre."""
+        path = Path(AUDIO_DIR) / f"{article_id}-c.wav"
         if path.exists():
             return path.read_bytes()
         with _lock_for("court:" + article_id):
@@ -265,7 +265,8 @@ VERSION DE LA PARTIE MISE EN CAUSE (analyse préalable) : {art.get('counter_view
             titre = brief.get("titre") or art.get("titre_fr") or art.get("title", "")
             chapo = brief.get("chapo") or art.get("chapo_fr") or ""
             # Le chapô dit déjà l'essentiel : le titre en plus ferait doublon à l'oreille
-            audio = self.synthesize(f"{art.get('source', '')}.\n\n{chapo or titre}")
+            # Le chapô dit déjà l'essentiel : titre et source en plus feraient du bruit à l'oreille
+            audio = self.synthesize(chapo or titre)
             if audio:
                 path.write_bytes(audio)
             return audio

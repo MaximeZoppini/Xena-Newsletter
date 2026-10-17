@@ -56,8 +56,6 @@ function dayLabel(d) {
   return d.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" });
 }
 
-const timeLabel = (d) => d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
-
 // ------------------------------------------------------------------ « déjà vu » (synchronisé serveur)
 const seenIds = new Set();
 function markSeen(id) {
@@ -131,6 +129,7 @@ function playQueue(items, kind) {
   queue.blobs = new Map();
   $("#player-bar").hidden = false;
   $("#p-dig").hidden = kind === "chat";
+  $("#player-kicker").hidden = items.length < 2 || kind === "chat";
   $("#p-prev").hidden = $("#p-next").hidden = items.length < 2;
   playIndex(0);
 }
@@ -150,7 +149,7 @@ async function playIndex(i) {
     blob = await loadItem(i);
   } catch (e) {
     if (token !== queue.token) return;
-    $("#player-kicker").textContent = "Audio indisponible : " + e.message;
+    $("#player-label").textContent = "⚠ " + e.message;
     return setTimeout(() => token === queue.token && playIndex(i + 1), 1500);
   }
   if (token !== queue.token) return;
@@ -212,7 +211,7 @@ const fetchBlob = (path) => () => api(path).then((r) => r.blob());
 function listenArticle(a) {
   markSeen(a.id);
   playQueue([{
-    kicker: `Résumé · ${a.source}`, label: a.titre, article: a,
+    label: a.titre, article: a,
     load: fetchBlob(`/api/articles/${a.id}/audio`),
   }], "article");
 }
@@ -222,7 +221,7 @@ async function refreshFlashCount() {
   try {
     const data = await (await api("/api/flash")).json();
     const n = data.articles.length;
-    $("#flash-count").textContent = n ? `(${n})` : "";
+    $("#flash-count").textContent = n || "";
     $("#flash-btn").classList.toggle("empty", !n);
     return data.articles;
   } catch { return []; }
@@ -230,23 +229,13 @@ async function refreshFlashCount() {
 
 async function playFlash() {
   unlockAudio();
-  const btn = $("#flash-btn");
-  btn.disabled = true;
   const articles = await refreshFlashCount();
-  btn.disabled = false;
-  const intro = articles.length
-    ? `${articles.length === 1 ? "Une news" : articles.length + " news"} depuis ta dernière écoute. On y va.`
-    : "Rien de nouveau depuis ta dernière écoute.";
-  const items = [{
-    kicker: "Ce que j'ai raté", label: intro,
-    load: () => postJson("/api/tts", { text: intro }).then((r) => r.blob()),
-  }];
-  articles.forEach((a, i) => items.push({
-    kicker: `${i + 1}/${articles.length} · ${a.source}`, label: a.titre, article: a,
+  if (!articles.length) return;
+  playQueue(articles.map((a, i) => ({
+    kicker: `${i + 1}/${articles.length}`, label: a.titre, article: a,
     load: fetchBlob(`/api/articles/${a.id}/audio?version=court`),
     onStart: () => markSeen(a.id),
-  }));
-  playQueue(items, "flash");
+  })), "flash");
 }
 
 // ------------------------------------------------------------------ fil d'actu
@@ -289,7 +278,7 @@ async function loadMore(list, more) {
         list.append(h("div", { class: "day" }, day));
         feedState.lastDay = day;
       }
-      list.append(renderCard(a, d));
+      list.append(renderCard(a));
     }
     more.hidden = data.articles.length < 40;
   } catch (e) {
@@ -307,46 +296,33 @@ function importance(score) {
   return { cls: "imp-white", label: "Secondaire" };
 }
 
-function renderCard(a, d) {
+function renderCard(a) {
   const details = h("div", { class: "details", hidden: true });
-  const toggle = h("button", { class: "chip", onclick: () => toggleDetails(a, details, toggle) }, "Plus");
   const imp = importance(a.score ?? 0);
-  const thumb = a.image
-    ? h("img", { class: "thumb", src: a.image, alt: "", loading: "lazy", referrerpolicy: "no-referrer",
-        onerror: (e) => e.target.replaceWith(h("div", { class: "thumb ph" }, a.source.slice(0, 1))) })
-    : h("div", { class: "thumb ph" }, a.source.slice(0, 1));
   return h("article", { class: "card" + (a.seen ? " seen" : ""), "data-card": a.id },
-    h("div", { class: "card-main", onclick: (e) => { if (!e.target.closest("button")) toggleDetails(a, details, toggle); } },
-      h("div", { class: "card-text" },
-        h("div", { class: "meta" },
-          h("span", { class: `imp ${imp.cls}`, title: imp.label }),
-          h("span", { class: "source" }, a.source),
-          d ? h("span", {}, "· " + timeLabel(d)) : null,
-        ),
-        h("h2", {}, a.titre),
-      ),
-      thumb,
+    h("div", { class: "card-main", onclick: (e) => { if (!e.target.closest("button")) toggleDetails(a, details); } },
+      h("h2", {}, h("span", { class: `imp ${imp.cls}`, title: imp.label }), a.titre),
+      a.image ? h("img", { class: "thumb", src: a.image, alt: "", loading: "lazy", referrerpolicy: "no-referrer",
+        onerror: (e) => e.target.remove() }) : null,
     ),
     h("div", { class: "card-actions" },
-      toggle,
-      h("button", { class: "chip", onclick: () => listenArticle(a) }, "▶ Écouter"),
-      h("button", { class: "chip", onclick: () => openChat(a) }, "🎙 En parler"),
+      h("button", { class: "ibtn", "aria-label": "Lire la fiche", onclick: () => toggleDetails(a, details) }, "📝"),
+      h("button", { class: "ibtn", "aria-label": "Écouter", onclick: () => listenArticle(a) }, "▶"),
+      h("button", { class: "ibtn", "aria-label": "En parler", onclick: () => openChat(a) }, "🎙"),
     ),
     details,
   );
 }
 
-async function toggleDetails(a, details, toggle) {
+async function toggleDetails(a, details) {
   if (!details.hidden) {
     details.hidden = true;
-    toggle.textContent = "Plus";
     return;
   }
   details.hidden = false;
-  toggle.textContent = "Réduire";
   markSeen(a.id);
   if (details.dataset.loaded) return;
-  details.replaceChildren(h("p", { class: "note" }, "Lecture de l'article et préparation de la fiche…"));
+  details.replaceChildren(h("p", { class: "note" }, "…"));
   try {
     const full = await (await api(`/api/articles/${a.id}`)).json();
     Object.assign(a, { brief: full.brief, url: full.url });
@@ -370,7 +346,7 @@ function renderBrief(a, full) {
       h("div", { class: "concept" },
         h("b", {}, c.terme),
         h("p", {}, c.explication),
-        h("button", { class: "link-btn", onclick: () => openChat(a, `Explique-moi plus en détail « ${c.terme} », et son rôle exact dans cette affaire.`) }, "Creuser à l'oral →"),
+        h("button", { class: "ibtn", "aria-label": "En parler", onclick: () => openChat(a, `Explique-moi plus en détail « ${c.terme} », et son rôle exact dans cette affaire.`) }, "🎙"),
       )))) : null,
     b.questions_ouvertes?.length ? section("Ce qu'on ne sait pas encore",
       h("div", { class: "prose" }, b.questions_ouvertes.map((q) => h("p", {}, q)))) : null,
@@ -378,8 +354,7 @@ function renderBrief(a, full) {
       b.angle_source || full.framing ? h("p", { class: "note" }, "Angle : " + (b.angle_source || full.framing)) : null,
       full.source_quote ? h("p", { class: "quote" }, full.source_quote) : null,
       b.limites ? h("p", { class: "note" }, b.limites) : null,
-      h("p", { class: "note" }, "Titre d'origine : " + full.title_original),
-      h("a", { class: "source-link", href: full.url, target: "_blank", rel: "noopener" }, `Lire sur ${full.source} ↗`),
+      h("a", { class: "source-link", href: full.url, target: "_blank", rel: "noopener" }, `${full.source} ↗`),
     ),
   ];
 }
@@ -415,27 +390,24 @@ function paragraphs(text) {
 function renderChatLog() {
   const log = $("#chat-log");
   log.replaceChildren();
-  if (!chat.history.length) {
-    log.append(h("p", { class: "note" },
-      "Parle-lui de ce que tu veux : une news, un lien entre plusieurs, un concept. " +
-      "Appuie une fois pour parler, prends tout ton temps, puis appuie à nouveau pour envoyer."));
-  }
   for (const turn of chat.history) log.append(renderMsg(turn));
   log.scrollTop = log.scrollHeight;
 }
 
 function renderMsg(turn) {
   if (turn.role === "user") {
-    return h("div", { class: "msg user" }, h("div", { class: "who" }, "Toi"), h("div", { class: "body" }, turn.text));
+    return h("div", { class: "msg user" }, h("div", { class: "body" }, turn.text));
   }
   const searched = turn.queries?.length;
-  return h("div", { class: "msg model" }, h("div", { class: "who" }, "Xena"),
+  return h("div", { class: "msg model" },
     h("div", { class: "body" }, paragraphs(turn.text).map((p) => h("p", {}, p))),
-    h("div", { class: "grounding" + (searched ? "" : " warn") },
-      searched ? "🔎 " + turn.queries.join(" · ") : "⚠ Réponse sans recherche web",
-      turn.sources?.length ? h("div", { class: "sources" }, turn.sources.map((s) =>
-        h("a", { href: s.url, target: "_blank", rel: "noopener" }, s.title))) : null,
-    ));
+    searched
+      ? h("details", { class: "grounding" },
+          h("summary", {}, `🔎 ${turn.sources?.length || turn.queries.length}`),
+          h("div", {}, turn.queries.join(" · ")),
+          h("div", { class: "sources" }, (turn.sources || []).map((s) =>
+            h("a", { href: s.url, target: "_blank", rel: "noopener" }, s.title))))
+      : h("div", { class: "grounding warn", title: "Réponse sans recherche web" }, "⚠ sans recherche"));
 }
 
 function setStatus(text) { $("#chat-status").textContent = text || ""; }
@@ -446,8 +418,8 @@ async function sendQuestion({ text, audioB64 }) {
   chat.history.push(pending);
   renderChatLog();
   const t0 = Date.now();
-  setStatus("Xena cherche et réfléchit…");
-  const timer = setInterval(() => setStatus(`Xena cherche et réfléchit… ${Math.round((Date.now() - t0) / 1000)} s`), 1000);
+  setStatus("…");
+  const timer = setInterval(() => setStatus(`… ${Math.round((Date.now() - t0) / 1000)} s`), 1000);
   $("#mic").disabled = true;
   try {
     const history = chat.history.slice(0, -1).map(({ role, text }) => ({ role, text }));
@@ -484,7 +456,7 @@ function speak(text) {
   if (!parts.length) return;
   if (settings.voice === "browser") { stopAll(); return speakBrowser(parts); }
   playQueue(parts.map((p, i) => ({
-    kicker: "Xena répond", label: `Paragraphe ${i + 1}/${parts.length}`,
+    label: "",
     load: () => postJson("/api/tts", { text: p }).then((r) => r.blob()),
     onStart: () => highlight(i),
   })), "chat");
@@ -592,9 +564,9 @@ function updateMic() {
   $("#mic").classList.toggle("recording", recorder.active);
   if (recorder.active) {
     const s = Math.round((Date.now() - recorder.startedAt) / 1000);
-    $("#mic-label").textContent = `Je t'écoute… ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")} · appuie pour envoyer`;
+    $("#mic-label").textContent = `● ${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
   } else {
-    $("#mic-label").textContent = "Appuie pour parler";
+    $("#mic-label").textContent = "🎙";
   }
 }
 
@@ -620,7 +592,7 @@ async function onMic() {
     const seconds = (Date.now() - recorder.startedAt) / 1000;
     const wav = recorder.stop();
     updateMic();
-    if (seconds < 0.8) { setStatus("Trop court, réessaie."); return; }
+    if (seconds < 0.8) return;
     sendQuestion({ audioB64: toBase64(wav) });
   }
 }
@@ -665,9 +637,9 @@ function initChat() {
   $("#to-gemini").addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(geminiPrompt());
-      setStatus("Contexte copié : colle-le dans Gemini, puis lance Gemini Live.");
+      setStatus("Contexte copié");
     } catch {
-      setStatus("Copie impossible, ouvre Gemini et décris le sujet.");
+      setStatus("");
     }
     window.open("https://gemini.google.com/app", "_blank", "noopener");
   });

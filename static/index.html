@@ -14,8 +14,8 @@
   <header class="topbar">
     <div class="topbar-row">
       <span class="brand">Xena</span>
-      <button class="btn flash-btn" id="flash-btn">▶ Ce que j'ai raté <span id="flash-count"></span></button>
-      <button class="icon-btn" id="settings-btn" aria-label="Réglages de la voix">Voix</button>
+      <button class="ibtn flash-btn" id="flash-btn" aria-label="Écouter ce que j'ai raté">▶<span id="flash-count" class="badge"></span></button>
+      <button class="ibtn" id="settings-btn" aria-label="Réglages">⚙︎</button>
     </div>
     <nav class="tabs" id="tabs">
       <button data-filtre="top" class="tab active">Importantes</button>
@@ -37,7 +37,7 @@
 
   <main id="feed" class="feed"></main>
 
-  <button id="talk-fab" class="fab">🎙 Parler à Xena</button>
+  <button id="talk-fab" class="fab" aria-label="Parler à Xena">🎙</button>
 
   <div id="player-bar" class="player-bar" hidden>
     <div class="player-info">
@@ -49,7 +49,7 @@
       <button class="ctrl" id="p-prev" aria-label="Précédent">⏮</button>
       <button class="ctrl main" id="p-toggle" aria-label="Lecture / pause">⏸</button>
       <button class="ctrl" id="p-next" aria-label="Suivant">⏭</button>
-      <button class="ctrl dig" id="p-dig">Creuser</button>
+      <button class="ctrl" id="p-dig" aria-label="En parler">🎙</button>
       <button class="ctrl" id="p-close" aria-label="Arrêter">✕</button>
     </div>
     <audio id="player" preload="auto" playsinline></audio>
@@ -57,32 +57,27 @@
 
   <aside id="chat" class="chat" hidden>
     <div class="chat-head">
-      <div>
-        <div class="chat-title">Xena</div>
-        <div class="chat-sub">Connaît toute ton actu de la semaine et vérifie sur le web</div>
+      <div class="chat-tools">
+        <button class="ibtn" id="stop-voice" aria-label="Couper la voix">⏹</button>
+        <button class="ibtn" id="replay" aria-label="Répéter">↻</button>
+        <button class="ibtn" id="clear-chat" aria-label="Nouvelle conversation">＋</button>
+        <button class="ibtn" id="to-gemini" aria-label="Continuer dans Gemini">↗</button>
       </div>
-      <button class="icon-btn" id="chat-close" aria-label="Fermer la discussion">✕</button>
+      <button class="ibtn" id="chat-close" aria-label="Fermer">✕</button>
     </div>
     <div id="focus" class="focus" hidden>
-      <span>À propos de : <b id="focus-title"></b></span>
+      <b id="focus-title"></b>
       <button class="link-btn" id="focus-clear" aria-label="Parler de tout">✕</button>
     </div>
     <div class="chat-log" id="chat-log"></div>
     <div class="chat-status" id="chat-status"></div>
     <div class="chat-controls">
       <button id="mic" class="mic" aria-label="Parler">
-        <span class="mic-dot"></span><span id="mic-label">Appuie pour parler</span>
+        <span id="mic-label">🎙</span>
       </button>
       <form id="chat-form" class="chat-form">
-        <input id="chat-input" type="text" placeholder="…ou écris ta question" autocomplete="off">
-        <button type="submit" class="btn">Envoyer</button>
+        <input id="chat-input" type="text" placeholder="Écrire…" autocomplete="off" enterkeyhint="send">
       </form>
-      <div class="chat-tools">
-        <button class="link-btn" id="stop-voice">Couper la voix</button>
-        <button class="link-btn" id="replay">Répéter</button>
-        <button class="link-btn" id="clear-chat">Nouvelle conversation</button>
-        <button class="link-btn" id="to-gemini">Continuer dans Gemini ↗</button>
-      </div>
     </div>
   </aside>
 
