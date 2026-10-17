@@ -100,10 +100,23 @@ class Storage:
                 conn.execute("ALTER TABLE analyses ADD COLUMN target_domain TEXT")
             except sqlite3.OperationalError:
                 pass
-            try:
-                conn.execute("ALTER TABLE analyses ADD COLUMN chosen_style TEXT")
-            except sqlite3.OperationalError:
-                pass
+            for col in ("chosen_style", "titre_fr", "chapo_fr"):
+                try:
+                    conn.execute(f"ALTER TABLE analyses ADD COLUMN {col} TEXT")
+                except sqlite3.OperationalError:
+                    pass
+            # Fiches de lecture complètes (texte de l'article récupéré + brief en français)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS briefs (
+                    article_id TEXT PRIMARY KEY,
+                    brief_json TEXT NOT NULL,
+                    source_text TEXT,
+                    model TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (article_id) REFERENCES articles(id)
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_articles_ingested ON articles(ingested_at)")
             conn.commit()
 
     @staticmethod
@@ -144,10 +157,9 @@ class Storage:
             conn.execute("""
                 INSERT OR REPLACE INTO analyses (
                     article_id, systemic_impact, novelty_scoop, evidence_quality, global_score,
-                    factual_core, framing_detected, counter_view, source_quote, tweet_text,
-                    target_domain, chosen_style
+                    factual_core, framing_detected, counter_view, source_quote, titre_fr, chapo_fr
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 article_id,
                 analysis.get("systemic_impact", 0),
@@ -158,116 +170,50 @@ class Storage:
                 analysis.get("framing_detected", ""),
                 analysis.get("counter_view", ""),
                 analysis.get("source_quote", ""),
-                analysis.get("tweet_text", ""),
-                analysis.get("target_domain", ""),
-                analysis.get("chosen_style", "")
+                analysis.get("titre_fr", ""),
+                analysis.get("chapo_fr", ""),
             ))
-            score = analysis.get("global_score", 0.0)
-            status = "eligible" if score >= 8.0 and analysis.get("novelty_scoop", 0) >= 7 else "rejected"
-            conn.execute("UPDATE articles SET status = ? WHERE id = ?", (status, article_id))
+            conn.execute("UPDATE articles SET status = 'analyzed' WHERE id = ?", (article_id,))
             conn.commit()
 
-    def mark_published(self, article_id: str):
-        with self._get_connection() as conn:
-            conn.execute("UPDATE analyses SET published_to_telegram = 1 WHERE article_id = ?", (article_id,))
-            conn.execute("UPDATE articles SET status = 'published' WHERE id = ?", (article_id,))
-            conn.commit()
+    _LIST_COLUMNS = """
+        a.id, a.url, a.title, a.source, a.category, a.raw_summary, a.published_at, a.ingested_at,
+        an.global_score, an.systemic_impact, an.novelty_scoop, an.evidence_quality,
+        an.factual_core, an.framing_detected, an.counter_view, an.source_quote,
+        an.titre_fr, an.chapo_fr, b.brief_json
+    """
 
-    def get_state(self, key: str, default: Optional[str] = None) -> Optional[str]:
+    def list_articles(self, min_score: float = 0.0, limit: int = 40, offset: int = 0) -> List[Dict[str, Any]]:
         with self._get_connection() as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT value FROM app_state WHERE key = ?", (key,))
-            row = cur.fetchone()
-            return row["value"] if row else default
-
-    def set_state(self, key: str, value: str):
-        with self._get_connection() as conn:
-            conn.execute("""
-                INSERT INTO app_state (key, value, updated_at)
-                VALUES (?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-            """, (key, value))
-            conn.commit()
-
-    def get_daily_best_candidate(self, min_score: float = 7.0, max_age_hours: int = 36) -> Optional[tuple]:
-        """
-        Sélectionne le meilleur scoop inédit des dernières heures :
-        Trié par meilleur global_score, puis plus récent (ingested_at).
-        """
-        import urllib.parse
-        with self._get_connection() as conn:
-            cur = conn.cursor()
-            query = """
-                SELECT 
-                    a.id, a.url, a.title, a.source, a.category, a.raw_summary, a.published_at, a.ingested_at,
-                    an.global_score, an.systemic_impact, an.novelty_scoop, an.evidence_quality,
-                    an.factual_core, an.framing_detected, an.counter_view, an.source_quote, an.tweet_text,
-                    an.target_domain, an.chosen_style
+            rows = conn.execute(f"""
+                SELECT {self._LIST_COLUMNS}
                 FROM articles a
                 JOIN analyses an ON a.id = an.article_id
-                WHERE an.published_to_telegram = 0
-                  AND an.global_score >= ?
-                  AND datetime(a.ingested_at) >= datetime('now', ?)
-                ORDER BY an.global_score DESC, a.ingested_at DESC
-                LIMIT 1
-            """
-            cur.execute(query, (min_score, f"-{max_age_hours} hours"))
-            row = cur.fetchone()
+                LEFT JOIN briefs b ON a.id = b.article_id
+                WHERE an.global_score >= ?
+                ORDER BY a.ingested_at DESC
+                LIMIT ? OFFSET ?
+            """, (min_score, limit, offset)).fetchall()
+            return [dict(r) for r in rows]
 
-            # Fallback : si aucun article n'atteint min_score dans la fenêtre, prendre le meilleur >= 6.0
-            if not row and min_score > 6.0:
-                cur.execute(query, (6.0, f"-{max_age_hours} hours"))
-                row = cur.fetchone()
+    def get_article(self, article_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            row = conn.execute(f"""
+                SELECT {self._LIST_COLUMNS}, b.source_text
+                FROM articles a
+                LEFT JOIN analyses an ON a.id = an.article_id
+                LEFT JOIN briefs b ON a.id = b.article_id
+                WHERE a.id = ?
+            """, (article_id,)).fetchone()
+            return dict(row) if row else None
 
-            if not row:
-                return None
-
-            item = {
-                "id": row["id"],
-                "url": row["url"],
-                "title": row["title"],
-                "source": row["source"],
-                "category": row["category"],
-                "summary": row["raw_summary"],
-                "published_at": row["published_at"],
-                "ingested_at": row["ingested_at"]
-            }
-
-            target_domain = row["target_domain"]
-            if not target_domain and row["url"]:
-                try:
-                    target_domain = urllib.parse.urlparse(row["url"]).netloc.replace("www.", "")
-                except Exception:
-                    target_domain = ""
-
-            analysis = {
-                "global_score": row["global_score"],
-                "systemic_impact": row["systemic_impact"],
-                "novelty_scoop": row["novelty_scoop"],
-                "evidence_quality": row["evidence_quality"],
-                "factual_core": row["factual_core"],
-                "framing_detected": row["framing_detected"],
-                "counter_view": row["counter_view"],
-                "source_quote": row["source_quote"],
-                "tweet_text": row["tweet_text"],
-                "target_domain": target_domain,
-                "chosen_style": row["chosen_style"] or "insider"
-            }
-            return item, analysis
-
-    def log_feedback(self, article_id: str, action: str, tweet_text: str = "", notes: str = ""):
+    def save_brief(self, article_id: str, brief_json: str, source_text: str, model: str):
         with self._get_connection() as conn:
             conn.execute("""
-                INSERT INTO editorial_feedback (article_id, action, tweet_text, notes)
+                INSERT OR REPLACE INTO briefs (article_id, brief_json, source_text, model)
                 VALUES (?, ?, ?, ?)
-            """, (article_id, action, tweet_text, notes))
+            """, (article_id, brief_json, source_text, model))
             conn.commit()
-
-    def get_feedback_stats(self) -> Dict[str, int]:
-        with self._get_connection() as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT action, COUNT(*) as count FROM editorial_feedback GROUP BY action")
-            return {row["action"]: row["count"] for row in cur.fetchall()}
 
     def log_hybrid_eval(self, data: Dict[str, Any]):
         with self._get_connection() as conn:
@@ -303,71 +249,3 @@ class Storage:
                 data.get("savings", 0.0)
             ))
             conn.commit()
-
-    def get_hybrid_stats(self) -> Dict[str, Any]:
-        with self._get_connection() as conn:
-            cur = conn.cursor()
-            cur.execute("""
-                SELECT 
-                    COUNT(*) as total_count,
-                    SUM(CASE WHEN jev_decision = 'REJECTED' THEN 1 ELSE 0 END) as rejected_count,
-                    SUM(CASE WHEN jev_decision = 'QUALIFIED' THEN 1 ELSE 0 END) as qualified_count,
-                    AVG(jev_latency_ms) as avg_jev_latency,
-                    AVG(CASE WHEN gemini_called = 1 THEN gemini_latency_ms ELSE NULL END) as avg_gemini_latency,
-                    SUM(cost_without_jev) as total_cost_without_jev,
-                    SUM(cost_hybrid) as total_cost_hybrid,
-                    SUM(savings) as total_savings
-                FROM hybrid_eval_logs
-            """)
-            row = cur.fetchone()
-            if not row or not row["total_count"]:
-                return {
-                    "total_count": 0,
-                    "rejected_count": 0,
-                    "qualified_count": 0,
-                    "filter_rate_pct": 0.0,
-                    "avg_jev_latency_ms": 0,
-                    "avg_gemini_latency_ms": 0,
-                    "speedup_factor": 1.0,
-                    "total_cost_without_jev": 0.0,
-                    "total_cost_hybrid": 0.0,
-                    "total_savings": 0.0,
-                    "savings_pct": 0.0
-                }
-
-            total = row["total_count"]
-            rej = row["rejected_count"] or 0
-            qual = row["qualified_count"] or 0
-            filter_rate = round((rej / total) * 100, 1) if total > 0 else 0.0
-            avg_jev = round(row["avg_jev_latency"] or 0)
-            avg_gemini = round(row["avg_gemini_latency"] or 0)
-            speedup = round(avg_gemini / avg_jev, 1) if avg_jev > 0 and avg_gemini > 0 else 1.0
-
-            c_without = round(row["total_cost_without_jev"] or 0.0, 5)
-            c_hybrid = round(row["total_cost_hybrid"] or 0.0, 5)
-            savings = round(row["total_savings"] or 0.0, 5)
-            savings_pct = round((savings / c_without) * 100, 1) if c_without > 0 else 0.0
-
-            return {
-                "total_count": total,
-                "rejected_count": rej,
-                "qualified_count": qual,
-                "filter_rate_pct": filter_rate,
-                "avg_jev_latency_ms": avg_jev,
-                "avg_gemini_latency_ms": avg_gemini,
-                "speedup_factor": speedup,
-                "total_cost_without_jev": c_without,
-                "total_cost_hybrid": c_hybrid,
-                "total_savings": savings,
-                "savings_pct": savings_pct
-            }
-
-    def get_hybrid_logs(self, limit: int = 50) -> List[Dict[str, Any]]:
-        with self._get_connection() as conn:
-            cur = conn.cursor()
-            cur.execute("""
-                SELECT * FROM hybrid_eval_logs ORDER BY id DESC LIMIT ?
-            """, (limit,))
-            return [dict(row) for row in cur.fetchall()]
-
-

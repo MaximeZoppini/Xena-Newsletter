@@ -1,6 +1,7 @@
 [Unit]
-Description=x-newsletter Independent Media & AI Curator Daemon
-After=network.target
+Description=Xena - veille d'actualité personnelle (site web + analyse)
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
@@ -8,7 +9,7 @@ User=root
 WorkingDirectory=/opt/x-newsletter
 ExecStart=/opt/x-newsletter/venv/bin/python main.py
 Restart=always
-RestartSec=30
+RestartSec=10
 EnvironmentFile=-/opt/x-newsletter/.env
 
 [Install]

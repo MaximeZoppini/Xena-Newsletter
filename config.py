@@ -13,23 +13,26 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
 TYPESAFE_API_KEY = os.getenv("TYPESAFE_API_KEY", "")
 TYPESAFE_MODEL = os.getenv("TYPESAFE_MODEL", "jev-latest")
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
-DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
+# Modèles : analyse rapide (Flash), conversation (le meilleur Pro), voix (TTS)
+GEMINI_CHAT_MODEL = os.getenv("GEMINI_CHAT_MODEL", "gemini-pro-latest")
+GEMINI_CHAT_THINKING = os.getenv("GEMINI_CHAT_THINKING", "low")
+GEMINI_TTS_MODEL = os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-tts")
+GEMINI_TTS_VOICE = os.getenv("GEMINI_TTS_VOICE", "Charon")
 
-# Base de données & Paramètres
+# Base de données & fichiers générés
 DATABASE_PATH = os.getenv("DATABASE_PATH", str(BASE_DIR / "data" / "x_newsletter.db"))
-CARDS_DIR = os.getenv("CARDS_DIR", str(BASE_DIR / "data" / "cards"))
+AUDIO_DIR = os.getenv("AUDIO_DIR", str(BASE_DIR / "data" / "audio"))
+STATIC_DIR = str(BASE_DIR / "static")
 
 # Veille en temps réel (scan toutes les 60s avec ETag caching)
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "60"))
 
-# Seuil d'admissibilité éditoriale (Faable recommande ≥ 7.5 pour attraper les vraies enquêtes de fond)
-MIN_INTEREST_SCORE = float(os.getenv("MIN_INTEREST_SCORE", "7.5"))
+# Score à partir duquel une news est "importante" : fiche complète générée et affichée par défaut
+MIN_INTEREST_SCORE = float(os.getenv("MIN_INTEREST_SCORE", "7"))
 
-# Publication quotidienne (12h00 par défaut = tous les midis)
-PUBLISH_HOUR = int(os.getenv("PUBLISH_HOUR", "12"))
-PUBLISH_MINUTE = int(os.getenv("PUBLISH_MINUTE", "0"))
+# Site web : écoute en local uniquement, exposé sur le tailnet via `tailscale serve`
+WEB_HOST = os.getenv("WEB_HOST", "127.0.0.1")
+WEB_PORT = int(os.getenv("WEB_PORT", "8080"))
 
 # Flux d'investigation et tech surveillés
 FEEDS = [

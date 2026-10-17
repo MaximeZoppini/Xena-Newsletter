@@ -1,0 +1,169 @@
+:root {
+  --bg: #f6f4ef;
+  --surface: #ffffff;
+  --text: #1d1f23;
+  --muted: #6b6e75;
+  --line: #e3e0d8;
+  --accent: #b4462f;
+  --accent-soft: #f4e3dd;
+  --ok: #2f7d55;
+  --serif: "Iowan Old Style", "Charter", "Palatino", Georgia, serif;
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a;
+    --surface: #1c1f24;
+    --text: #e8e6e1;
+    --muted: #9a9ca3;
+    --line: #2c3036;
+    --accent: #e0775e;
+    --accent-soft: #3a2621;
+    --ok: #5cba8a;
+  }
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  line-height: 1.5;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+button, input, select { font: inherit; color: inherit; }
+a { color: inherit; }
+
+/* ---------- barre du haut ---------- */
+.topbar {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; gap: 16px;
+  padding: calc(10px + env(safe-area-inset-top)) 20px 10px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line);
+}
+.brand { font-family: var(--serif); font-size: 22px; font-weight: 700; text-decoration: none; letter-spacing: .02em; }
+.tabs { display: flex; gap: 4px; margin-left: auto; }
+.tab {
+  border: 1px solid var(--line); background: transparent; border-radius: 999px;
+  padding: 6px 14px; cursor: pointer; color: var(--muted);
+}
+.tab.active { background: var(--text); color: var(--bg); border-color: var(--text); }
+.icon-btn {
+  border: 1px solid var(--line); background: var(--surface); border-radius: 10px;
+  padding: 6px 12px; cursor: pointer; min-height: 36px;
+}
+.settings {
+  display: flex; flex-wrap: wrap; gap: 24px; padding: 14px 20px;
+  border-bottom: 1px solid var(--line); background: var(--surface);
+}
+.settings label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--muted); }
+.settings input[type=range] { width: 220px; }
+
+main { max-width: 760px; margin: 0 auto; padding: 8px 20px 140px; }
+
+/* ---------- liste ---------- */
+.day { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 28px 0 8px; }
+.card {
+  display: block; text-decoration: none;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+  padding: 16px 18px; margin-bottom: 10px;
+}
+.card:active { transform: scale(.995); }
+.meta { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+.score {
+  font-weight: 700; font-variant-numeric: tabular-nums;
+  padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent);
+}
+.score.low { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+.card h2 { font-family: var(--serif); font-size: 20px; line-height: 1.3; margin: 6px 0 4px; }
+.card p { margin: 0; color: var(--muted); font-size: 15px; }
+.more { display: block; margin: 20px auto; }
+.empty { color: var(--muted); text-align: center; margin-top: 60px; }
+
+/* ---------- article ---------- */
+.back { display: inline-block; margin: 18px 0 6px; color: var(--muted); text-decoration: none; }
+.article h1 { font-family: var(--serif); font-size: 30px; line-height: 1.2; margin: 10px 0 12px; }
+.chapo { font-family: var(--serif); font-size: 20px; line-height: 1.5; margin: 0 0 20px; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 26px; }
+.btn {
+  border: 1px solid var(--text); background: var(--text); color: var(--bg);
+  border-radius: 12px; padding: 10px 16px; cursor: pointer; min-height: 44px; font-weight: 600;
+}
+.btn.ghost { background: transparent; color: var(--text); }
+.btn:disabled { opacity: .55; cursor: default; }
+.prose { font-family: var(--serif); font-size: 19px; line-height: 1.65; }
+.prose p { margin: 0 0 1em; }
+.article h3 {
+  font-family: var(--sans); font-size: 13px; text-transform: uppercase; letter-spacing: .08em;
+  color: var(--muted); margin: 30px 0 10px;
+}
+.box { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
+.concept { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.concept:last-child { border-bottom: 0; }
+.concept b { display: block; margin-bottom: 2px; }
+.concept p { margin: 0 0 6px; font-size: 16px; }
+.link-btn { background: none; border: 0; padding: 4px 0; color: var(--accent); cursor: pointer; font-weight: 600; }
+.quote { border-left: 3px solid var(--accent); padding-left: 14px; color: var(--muted); font-style: italic; }
+.source-link { display: inline-block; margin-top: 8px; font-weight: 600; color: var(--accent); }
+.note { font-size: 14px; color: var(--muted); }
+.loading { color: var(--muted); padding: 40px 0; }
+
+/* ---------- lecteur audio ---------- */
+.player-bar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+  background: var(--surface); border-top: 1px solid var(--line);
+}
+.player-bar audio { flex: 1; min-width: 0; height: 40px; }
+.player-label { font-size: 14px; color: var(--muted); max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+[hidden] { display: none !important; }
+
+/* ---------- discussion ---------- */
+.chat {
+  position: fixed; z-index: 40; right: 0; top: 0; bottom: 0; width: min(460px, 100%);
+  display: flex; flex-direction: column;
+  background: var(--surface); border-left: 1px solid var(--line);
+  padding-top: env(safe-area-inset-top);
+  box-shadow: -10px 0 40px rgba(0,0,0,.12);
+}
+.chat-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--line); }
+.chat-title { font-weight: 700; }
+.chat-sub { font-size: 13px; color: var(--muted); }
+.chat-log { flex: 1; overflow-y: auto; padding: 16px 18px; -webkit-overflow-scrolling: touch; }
+.msg { margin-bottom: 16px; }
+.msg .who { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 4px; }
+.msg.user .body { background: var(--accent-soft); border-radius: 12px; padding: 10px 12px; }
+.msg.model .body { font-family: var(--serif); font-size: 18px; line-height: 1.6; }
+.msg.model .body p { margin: 0 0 .8em; }
+.msg .body p.speaking { background: color-mix(in srgb, var(--accent-soft) 60%, transparent); border-radius: 6px; }
+.chat-status { min-height: 22px; padding: 0 18px; font-size: 14px; color: var(--muted); }
+.chat-controls { padding: 10px 18px calc(14px + env(safe-area-inset-bottom)); border-top: 1px solid var(--line); }
+.mic {
+  width: 100%; min-height: 64px; border-radius: 16px; cursor: pointer;
+  border: 2px solid var(--text); background: var(--text); color: var(--bg);
+  display: flex; align-items: center; justify-content: center; gap: 12px; font-weight: 700; font-size: 17px;
+  -webkit-user-select: none; user-select: none;
+}
+.mic-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--bg); opacity: .5; }
+.mic.recording { background: var(--accent); border-color: var(--accent); color: #fff; }
+.mic.recording .mic-dot { background: #fff; opacity: 1; animation: pulse 1.2s infinite; }
+.mic:disabled { opacity: .5; }
+@keyframes pulse { 50% { transform: scale(1.5); opacity: .4; } }
+.chat-form { display: flex; gap: 8px; margin-top: 10px; }
+.chat-form input { flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; background: var(--bg); }
+.chat-tools { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px; font-size: 14px; }
+
+@media (max-width: 640px) {
+  .topbar { padding-left: 16px; padding-right: 16px; gap: 10px; }
+  main { padding-left: 16px; padding-right: 16px; }
+  .article h1 { font-size: 25px; }
+  .chapo { font-size: 18px; }
+  .prose { font-size: 18px; }
+  .player-label { display: none; }
+}

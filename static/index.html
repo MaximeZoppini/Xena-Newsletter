@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Xena">
+  <meta name="theme-color" content="#f6f4ef" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#14161a" media="(prefers-color-scheme: dark)">
+  <title>Xena</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <a href="#/" class="brand">Xena</a>
+    <nav class="tabs" id="tabs">
+      <button data-filtre="top" class="tab active">Importantes</button>
+      <button data-filtre="all" class="tab">Tout</button>
+    </nav>
+    <button class="icon-btn" id="settings-btn" aria-label="Réglages de la voix">Voix</button>
+  </header>
+
+  <div id="settings" class="settings" hidden>
+    <label>Vitesse de lecture <output id="speed-out">0.90×</output>
+      <input type="range" id="speed" min="0.6" max="1.25" step="0.05" value="0.9">
+    </label>
+    <label>Voix
+      <select id="voice-mode">
+        <option value="gemini">Gemini (naturelle)</option>
+        <option value="browser">Navigateur (gratuite)</option>
+      </select>
+    </label>
+  </div>
+
+  <main id="app"></main>
+
+  <div id="player-bar" class="player-bar" hidden>
+    <span id="player-label" class="player-label"></span>
+    <audio id="player" controls preload="auto" playsinline></audio>
+    <button class="icon-btn" id="player-close" aria-label="Fermer le lecteur">✕</button>
+  </div>
+
+  <aside id="chat" class="chat" hidden>
+    <div class="chat-head">
+      <div>
+        <div class="chat-title">Discuter de l'article</div>
+        <div class="chat-sub" id="chat-sub"></div>
+      </div>
+      <button class="icon-btn" id="chat-close" aria-label="Fermer la discussion">✕</button>
+    </div>
+    <div class="chat-log" id="chat-log"></div>
+    <div class="chat-status" id="chat-status"></div>
+    <div class="chat-controls">
+      <button id="mic" class="mic" aria-label="Parler">
+        <span class="mic-dot"></span><span id="mic-label">Appuie pour parler</span>
+      </button>
+      <form id="chat-form" class="chat-form">
+        <input id="chat-input" type="text" placeholder="…ou écris ta question" autocomplete="off">
+        <button type="submit" class="btn">Envoyer</button>
+      </form>
+      <div class="chat-tools">
+        <button class="link-btn" id="stop-voice">Couper la voix</button>
+        <button class="link-btn" id="replay">Répéter</button>
+        <button class="link-btn" id="clear-chat">Effacer</button>
+        <button class="link-btn" id="to-gemini">Continuer dans Gemini ↗</button>
+      </div>
+    </div>
+  </aside>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

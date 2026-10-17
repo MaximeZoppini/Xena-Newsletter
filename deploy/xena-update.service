@@ -1,0 +1,7 @@
+[Unit]
+Description=Xena - récupère master depuis GitHub et redémarre si besoin
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/x-newsletter/deploy/xena-update.sh
