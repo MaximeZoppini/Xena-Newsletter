@@ -83,7 +83,32 @@ function initSettings() {
     applyRate();
   });
   mode.addEventListener("change", () => { settings.voice = mode.value; store.set("xena-voice", mode.value); });
-  $("#settings-btn").addEventListener("click", () => { $("#settings").hidden = !$("#settings").hidden; });
+  $("#settings-btn").addEventListener("click", () => {
+    $("#settings").hidden = !$("#settings").hidden;
+    if (!$("#settings").hidden) loadReglages();
+  });
+  $("#r-save").addEventListener("click", saveReglages);
+}
+
+// Réglages de Xena (en base, côté serveur) : composants critiques, questions négatives, profil, contradicteur
+const REGLAGES = ["composants_critiques", "questions_negatives", "profil"];
+
+async function loadReglages() {
+  try {
+    const r = await (await api("/api/reglages")).json();
+    for (const name of REGLAGES) $(`#r-${name}`).value = r[name] || "";
+    $("#r-contradicteur").checked = !!r.contradicteur;
+    $("#r-status").textContent = "";
+  } catch (e) { $("#r-status").textContent = "⚠ " + e.message; }
+}
+
+async function saveReglages() {
+  const body = { contradicteur: $("#r-contradicteur").checked };
+  for (const name of REGLAGES) body[name] = $(`#r-${name}`).value;
+  try {
+    await postJson("/api/reglages", body);
+    $("#r-status").textContent = "✓";
+  } catch (e) { $("#r-status").textContent = "⚠ " + e.message; }
 }
 
 // ------------------------------------------------------------------ lecteur : une file d'écoute unique
@@ -258,11 +283,87 @@ async function renderFeed() {
   const feed = $("#feed");
   feed.replaceChildren(h("div", { class: "loading" }, "Chargement…"));
   feedState = { offset: 0, lastDay: null, dossiers: new Set() };
+  const synth = h("div", {});
   const list = h("div", {});
   const more = h("button", { class: "btn ghost more", onclick: () => loadMore(list, more) }, "Plus de news");
-  await loadMore(list, more);
-  feed.replaceChildren(list, more);
-  if (!list.children.length) feed.replaceChildren(h("p", { class: "empty" }, "Rien pour l'instant."));
+  await Promise.all([loadMore(list, more), loadSynthese(synth)]);
+  feed.replaceChildren(synth, list, more);
+  if (!list.children.length && !synth.children.length) feed.replaceChildren(h("p", { class: "empty" }, "Rien pour l'instant."));
+}
+
+// ------------------------------------------------------------------ synthèse 12 h
+// En tête du fil : la phrase à retenir et l'action ; le détail se déplie. ‹ › parcourt les synthèses précédentes.
+async function loadSynthese(box, id) {
+  try {
+    const resp = await fetch("/api/synthese" + (id ? `?id=${id}` : ""));
+    if (!resp.ok) { box.replaceChildren(); return; }
+    box.replaceChildren(renderSynthese(await resp.json(), box));
+  } catch { box.replaceChildren(); }
+}
+
+function renderSynthese(syn, box) {
+  const c = syn.contenu || {};
+  const d = parseDate(syn.created_at);
+  const when = d ? `${dayLabel(d)}, ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}` : "";
+  const details = h("div", { class: "synth-details", hidden: true });
+  const toggle = () => {
+    details.hidden = !details.hidden;
+    if (!details.hidden && !details.children.length) details.append(...renderSyntheseDetails(syn));
+  };
+  const rien = !c.action || /^rien\.?$/i.test(c.action.trim());
+  return h("section", { class: "synth" },
+    h("div", { class: "synth-kicker" }, when),
+    h("p", { class: "synth-phrase", onclick: toggle }, syn.phrase),
+    rien ? null : h("p", { class: "synth-action" }, "→ " + c.action),
+    h("div", { class: "card-actions" },
+      h("button", { class: "ibtn", "aria-label": "Détail", onclick: toggle }, "📝"),
+      h("button", { class: "ibtn", "aria-label": "Écouter", onclick: () => listenSynthese(syn) }, "▶"),
+      h("button", { class: "ibtn", "aria-label": "Une remarque", onclick: () => remarkSynthese(syn) }, "✎"),
+      h("span", { class: "spacer" }),
+      h("button", { class: "ibtn", "aria-label": "Synthèse précédente", disabled: !syn.prev_id,
+        onclick: () => loadSynthese(box, syn.prev_id) }, "‹"),
+      h("button", { class: "ibtn", "aria-label": "Synthèse suivante", disabled: !syn.next_id,
+        onclick: () => loadSynthese(box, syn.next_id) }, "›"),
+    ),
+    details,
+  );
+}
+
+function renderSyntheseDetails(syn) {
+  const c = syn.contenu || {};
+  const section = (title, items, fn) => items?.length ? h("section", {}, h("h3", {}, title), h("ul", { class: "synth-list" }, items.map(fn))) : null;
+  const link = (url, label) => url ? h("a", { href: url, target: "_blank", rel: "noopener" }, label) : label;
+  return [
+    section("Confirmé", c.confirme, (p) => h("li", {}, p.point, " ", h("span", { class: "note" }, link(p.lien, p.source || "source"), " ↗"))),
+    section("Faux ou non confirmé", c.faux_ou_non_confirme, (p) => h("li", {}, p.point, h("span", { class: "note" }, " — ", link(p.lien, p.raison || "")))),
+    section("Ce qui a changé", c.delta, (t) => h("li", {}, t)),
+    section("Ce qui ne se passe pas", c.ne_se_passe_pas, (t) => h("li", {}, t)),
+    section("À creuser", c.a_creuser, (a) => h("li", {}, link(a.lien, a.titre), a.pourquoi ? h("span", { class: "note" }, " — " + a.pourquoi) : null)),
+    c.questions_negatives?.length ? h("details", { class: "synth-more" }, h("summary", {}, "Questions négatives"),
+      h("ul", { class: "synth-list" }, c.questions_negatives.map((q) => h("li", {}, h("b", {}, q.question), " ", q.reponse)))) : null,
+    syn.corrections?.length ? h("details", { class: "synth-more" }, h("summary", {}, `Contradicteur (${syn.corrections.length})`),
+      c.brouillon_phrase ? h("p", { class: "note" }, "Avant : « " + c.brouillon_phrase + " »") : null,
+      h("ul", { class: "synth-list" }, syn.corrections.map((k) => h("li", {}, h("b", {}, k.type), " ", k.detail, k.raison ? h("span", { class: "note" }, " — " + k.raison) : null)))) : null,
+  ].filter(Boolean);
+}
+
+function listenSynthese(syn) {
+  const c = syn.contenu || {};
+  const parts = [syn.phrase];
+  if (c.action && !/^rien\.?$/i.test(c.action.trim())) parts.push("À faire : " + c.action);
+  (c.confirme || []).forEach((p) => parts.push(p.point));
+  if (c.delta?.length) parts.push("Ce qui a changé. " + c.delta.join(" "));
+  if (c.faux_ou_non_confirme?.length) parts.push("Ce qui ne tient pas. " + c.faux_ou_non_confirme.map((p) => p.point).join(" "));
+  playQueue(parts.map((p, i) => ({
+    kicker: `${i + 1}/${parts.length}`, label: p,
+    load: () => postJson("/api/tts", { text: p }).then((r) => r.blob()),
+  })), "synthese");
+}
+
+async function remarkSynthese(syn) {
+  const texte = window.prompt("Une remarque pour Xena (raté, faux, à revoir) :");
+  if (!texte?.trim()) return;
+  try { await postJson("/api/gap", { texte, synthese_id: syn.id }); } catch (e) { alert("⚠ " + e.message); }
 }
 
 async function loadMore(list, more) {

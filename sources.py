@@ -1,10 +1,12 @@
 import re
+import time
 import requests
 import feedparser
 from bs4 import BeautifulSoup
 from typing import List, Dict, Any, Optional
 import logging
-from config import FEEDS, HACKER_NEWS_TOP_URL, HACKER_NEWS_ITEM_URL
+import reglages
+from config import CISA_KEV_URL, FEEDS, HACKER_NEWS_TOP_URL, HACKER_NEWS_ITEM_URL
 from storage import Storage
 
 logging.basicConfig(level=logging.INFO)
@@ -36,7 +38,7 @@ def clean_html(raw_html: str) -> str:
     text = soup.get_text(separator=" ", strip=True)
     return " ".join(text.split())[:1200]
 
-def fetch_rss_feeds() -> List[Dict[str, Any]]:
+def fetch_rss_feeds(watchlist: Optional[re.Pattern] = None) -> List[Dict[str, Any]]:
     items = []
     for feed_info in FEEDS:
         url = feed_info["url"]
@@ -60,7 +62,7 @@ def fetch_rss_feeds() -> List[Dict[str, Any]]:
                 }
                 
                 parsed = feedparser.parse(resp.content)
-                for entry in parsed.entries[:2]:
+                for entry in parsed.entries[:feed_info["max_items"]]:
                     title = entry.get("title", "").strip()
                     link = entry.get("link", "").strip()
                     if not title or not link:
@@ -81,6 +83,8 @@ def fetch_rss_feeds() -> List[Dict[str, Any]]:
                                 break
                     raw_summary = entry.get("summary") or entry.get("description", "")
                     summary = clean_html(raw_summary)
+                    if feed_info["watchlist_only"] and not (watchlist and watchlist.search(f"{title} {summary}")):
+                        continue
                     pub_date = entry.get("published", "") or entry.get("updated", "")
                     
                     items.append({
@@ -90,6 +94,7 @@ def fetch_rss_feeds() -> List[Dict[str, Any]]:
                         "source": feed_info["name"],
                         "category": feed_info["category"],
                         "known_bias": feed_info["known_bias"],
+                        "source_level": feed_info["level"],
                         "summary": summary,
                         "published_at": pub_date,
                         "image": image
@@ -122,6 +127,7 @@ def fetch_hacker_news() -> List[Dict[str, Any]]:
                         "source": "Hacker News",
                         "category": "tech_signal",
                         "known_bias": "Agrégateur tech d'ingénieurs et chercheurs",
+                        "source_level": 3,
                         "summary": desc,
                         "published_at": str(data.get("time", ""))
                     })
@@ -129,9 +135,52 @@ def fetch_hacker_news() -> List[Dict[str, Any]]:
         logger.debug(f"Erreur fetch Hacker News: {e}")
     return items
 
+def fetch_cisa_kev(watchlist: Optional[re.Pattern]) -> List[Dict[str, Any]]:
+    """Entrées récentes du catalogue CISA KEV (failles exploitées) qui touchent un composant critique."""
+    if not watchlist:
+        return []
+    req_headers = dict(HEADERS)
+    cached = FEED_CACHE.get(CISA_KEV_URL, {})
+    if cached.get("etag"):
+        req_headers["If-None-Match"] = cached["etag"]
+    if cached.get("last_modified"):
+        req_headers["If-Modified-Since"] = cached["last_modified"]
+    items = []
+    try:
+        resp = requests.get(CISA_KEV_URL, headers=req_headers, timeout=15)
+        if resp.status_code != 200:
+            return []
+        FEED_CACHE[CISA_KEV_URL] = {"etag": resp.headers.get("ETag", ""), "last_modified": resp.headers.get("Last-Modified", "")}
+        # Seulement les ajouts de la semaine : le catalogue entier n'est pas de l'actualité
+        since = time.strftime("%Y-%m-%d", time.gmtime(time.time() - 7 * 86400))
+        vulns = [v for v in resp.json().get("vulnerabilities", []) if v.get("dateAdded", "") >= since]
+        for v in vulns:
+            text = f"{v.get('vendorProject', '')} {v.get('product', '')} {v.get('vulnerabilityName', '')}"
+            if not watchlist.search(text):
+                continue
+            title = f"CISA KEV : {v.get('cveID')} — {v.get('vulnerabilityName', '')}"
+            url = f"https://nvd.nist.gov/vuln/detail/{v.get('cveID')}"
+            items.append({
+                "id": Storage.generate_id(url, v.get("cveID", "")),
+                "title": title,
+                "url": url,
+                "source": "CISA KEV",
+                "category": "securite",
+                "known_bias": "Agence fédérale américaine : faille dont l'exploitation active est confirmée, source primaire",
+                "source_level": 1,
+                "summary": f"{v.get('shortDescription', '')} Action requise : {v.get('requiredAction', '')} "
+                           f"Ajoutée au catalogue le {v.get('dateAdded', '')}, échéance {v.get('dueDate', '')}. "
+                           f"Rançongiciel connu : {v.get('knownRansomwareCampaignUse', '')}.",
+                "published_at": v.get("dateAdded", ""),
+            })
+    except Exception as e:
+        logger.debug(f"Erreur fetch CISA KEV: {e}")
+    return items
+
 def get_all_new_candidates(storage: Storage) -> List[Dict[str, Any]]:
     all_candidates = []
-    for item in fetch_rss_feeds():
+    watchlist = reglages.composants_regex(storage)
+    for item in fetch_rss_feeds(watchlist) + fetch_cisa_kev(watchlist):
         if not storage.is_seen(item["id"], item["url"]):
             all_candidates.append(item)
             

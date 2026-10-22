@@ -83,6 +83,9 @@ Si la recherche ne donne rien de fiable, dis-le explicitement. Tu peux te passer
 - En général 60 à 160 mots. Plus long seulement si on te le demande ou si le sujet l'exige vraiment.
 - Arrête-toi quand tu as répondu : pas de conclusion, pas de résumé final, pas de proposition d'approfondir, pas de question de relance.
 
+### TA DERNIÈRE SYNTHÈSE 12 H (ce que tu as déjà dit à ton lecteur)
+{synthese}
+
 ### LES NEWS RÉCENTES DE TON LECTEUR (7 derniers jours, les plus importantes)
 {digest}
 
@@ -283,6 +286,16 @@ VERSION DE LA PARTIE MISE EN CAUSE (analyse préalable) : {art.get('counter_view
             lines.append(f"- {r['ingested_at'][:10]} · {r['source']} · {titre} — {chapo}")
         return "\n".join(lines) or "(aucune)"
 
+    def _synthese(self) -> str:
+        syn = self.storage.get_synthese()
+        if not syn:
+            return "(aucune)"
+        c = syn["contenu"]
+        points = "\n".join(f"- {p.get('point')}" for p in c.get("confirme", []))
+        faux = "\n".join(f"- {p.get('point')} : {p.get('raison', '')}" for p in c.get("faux_ou_non_confirme", []))
+        return (f"{syn['created_at'][:16]} UTC — « {syn['phrase']} »\nAction : {c.get('action', '')}\n"
+                f"Confirmé :\n{points or '(rien)'}\nFaux ou non confirmé :\n{faux or '(rien)'}")
+
     def _dossiers(self) -> str:
         blocks = []
         for d in self.storage.open_dossiers(days=7, limit=30):
@@ -378,6 +391,7 @@ Concepts déjà expliqués :
             raise RuntimeError("Clé Gemini absente")
         from google.genai import types
         system = (CHAT_PROMPT.replace("{digest}", self._digest()).replace("{dossiers}", self._dossiers())
+                  .replace("{synthese}", self._synthese())
                   .replace("{focus}", self._focus(article_id)))
 
         contents = []

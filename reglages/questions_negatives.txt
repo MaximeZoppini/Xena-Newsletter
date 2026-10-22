@@ -1,0 +1,7 @@
+# Questions auxquelles la synthèse répond avant d'écrire. Une par ligne. Modifiable depuis les réglages du site.
+Y a-t-il des dégâts réels constatés, pas seulement des failles publiées ?
+Une exploitation massive est-elle confirmée par une source de niveau 1-2 ?
+Un composant critique est-il touché sans correctif disponible ?
+Qu'est-ce que le flux présente comme nouveau et qui ne l'est pas ?
+Quelle panique du jour repose sur un seul événement compté plusieurs fois ?
+Qu'est-ce qui a été démenti depuis la dernière synthèse ?

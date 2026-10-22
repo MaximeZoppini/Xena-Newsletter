@@ -4,6 +4,7 @@ Xena lit en continu des médias d'investigation et tech, note chaque publication
 
 - **À lire** : une fiche en français pour chaque news importante — l'essentiel, le récit, pourquoi ça compte, la version de la partie mise en cause, les concepts expliqués.
 - **À écouter** : un résumé audio lu calmement (voix Gemini, générée une fois puis mise en cache).
+- **À retenir** : deux fois par jour (7 h et 19 h), une **synthèse 12 h** en tête du fil : une phrase qui porte le jugement, l'action à faire ou « rien », puis le confirmé, le faux ou non confirmé, ce qui a changé et ce qui ne se passe pas (voir `SYNTHESE.md`).
 - **À suivre** : une histoire qui évolue est un seul **dossier vivant**. Sa carte dit en une phrase où en est la situation (« Trump suspend les discussions avec Moscou », puis « Trump relance les négociations avec la Russie ») ; le fil se déplie étape par étape, les nouvelles depuis la dernière lecture en avant.
 - **À discuter** : on parle à voix haute à une IA de haut niveau sur l'article ou un concept qu'on ne comprend pas. Pas de coupure automatique : on prend le temps de formuler, on appuie pour envoyer. Réponse lue lentement, vitesse réglable.
 
@@ -28,6 +29,8 @@ flowchart LR
 **Score** = 0,40 × portée + 0,35 × rupture + 0,25 × solidité (démontré, publié, officiel vs rumeur). Dans le fil, un point indique l'importance : rouge ≥ 8,5, orange ≥ 7,5, jaune ≥ 6,5, blanc en dessous.
 **Confiance** : chaque news porte un statut (confirmé / allégué / démenti) et sa raison en une ligne, en tête de la fiche. Dans le fil, rien quand c'est confirmé, « ? » quand c'est allégué, « ✗ » quand c'est démenti.
 **Dossiers** : chaque news importante est rangée par Gemini Flash (un appel de plus par news ≥ 7). Si elle change l'état d'un dossier, une étape s'ajoute au fil ; si elle raconte un fait déjà connu, elle compte comme source supplémentaire (×2, ×3…) et n'est pas relue dans le flash audio. Au démarrage, les news des dernières 24 h sans dossier sont rangées une fois.
+**Sécurité** : CERT-FR (alertes et avis) et le catalogue CISA KEV, filtrés sans appel IA sur les composants critiques (réglages ⚙︎). Chaque source a un niveau (1 primaire, 2 chercheur reconnu, 3 presse, 4 réseau social) qui sert de point de départ à la confiance.
+**Synthèse 12 h** : modèle fort (`GEMINI_SYNTH_MODEL`, Pro par défaut) pour la synthèse et le contradicteur, Flash pour le regroupement et l'importance ; heures réglables par `SYNTHESE_HEURES=7,19`. Une échéance manquée (redémarrage) est rattrapée au démarrage. `main.py --synthese` en produit une tout de suite. Le bouton ✎ envoie une remarque au gap log, que chaque synthèse relit.
 Ligne éditoriale : neutralité sur le fond, rien n'est inventé au-delà de la source, aucun contournement de paywall.
 
 ## Fichiers
@@ -37,6 +40,8 @@ Ligne éditoriale : neutralité sur le fond, rien n'est inventé au-delà de la 
 | `main.py` | Boucle de veille + démarrage du site |
 | `sources.py` | Ingestion RSS / Hacker News |
 | `analyzer.py` | Notation et accroche FR (Gemini Flash, pré-filtre Jev) |
+| `synthese.py` | Synthèse 12 h en cinq passes (regroupement, importance, synthèse, contradicteur) |
+| `reglages.py` + `reglages/` | Composants critiques, questions négatives, profil : valeurs par défaut, modifiables depuis le site |
 | `dossiers.py` | Dossiers vivants : rangement des news et fil d'évolution |
 | `briefing.py` | Fiche de lecture, voix (TTS), conversation |
 | `web.py` + `static/` | Site et API JSON |

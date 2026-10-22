@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import reglages
 from briefing import Briefer
 from config import MIN_INTEREST_SCORE, STATIC_DIR
 from storage import Storage
@@ -125,6 +126,18 @@ class Handler(BaseHTTPRequestHandler):
                     "framing": row.get("framing_detected"),
                     "source_quote": row.get("source_quote"),
                 })
+            if url.path == "/api/synthese":
+                sid = parse_qs(url.query).get("id", [""])[0]
+                syn = self.storage.get_synthese(int(sid) if sid.isdigit() else None)
+                if not syn:
+                    return self._json(404, {"error": "aucune synthèse"})
+                syn.pop("clusters", None)  # volumineux, inutile à l'affichage
+                return self._json(200, syn)
+            if url.path == "/api/reglages":
+                return self._json(200, {
+                    **{name: reglages.get_text(self.storage, name) for name in reglages.TEXTES},
+                    "contradicteur": reglages.contradicteur_actif(self.storage),
+                })
             dm = DOSSIER_RE.match(url.path)
             if dm:
                 d = self.storage.get_dossier(int(dm.group(1)))
@@ -163,6 +176,20 @@ class Handler(BaseHTTPRequestHandler):
                 if not audio:
                     return self._json(502, {"error": "synthèse vocale impossible"})
                 return self._send(200, audio, "audio/wav")
+            if url.path == "/api/gap":
+                texte = (body.get("texte") or "").strip()[:2000]
+                if not texte:
+                    return self._json(400, {"error": "remarque vide"})
+                sid = body.get("synthese_id")
+                self.storage.log_gap("maxime", texte, "retour", "", sid if isinstance(sid, int) else None)
+                return self._json(200, {"ok": True})
+            if url.path == "/api/reglages":
+                for name in reglages.TEXTES:
+                    if isinstance(body.get(name), str):
+                        reglages.set_text(self.storage, name, body[name][:20000])
+                if isinstance(body.get("contradicteur"), bool):
+                    reglages.set_contradicteur(self.storage, body["contradicteur"])
+                return self._json(200, {"ok": True})
             if url.path == "/api/seen":
                 ids = [i for i in body.get("ids", []) if isinstance(i, str) and re.fullmatch(r"[0-9a-f]{16}", i)]
                 self.storage.mark_seen(ids)

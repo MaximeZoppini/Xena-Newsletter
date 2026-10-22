@@ -1,0 +1,17 @@
+# Un composant par ligne ; synonymes séparés par des virgules.
+# Une faille sur un de ces composants est prioritaire. Modifiable depuis les réglages du site.
+PHP
+Node.js, n8n
+Python, pip, certifi
+Java, OpenJDK
+Docker
+Proxmox
+Linux, Debian, Ubuntu
+OpenSSL
+nginx
+PostgreSQL
+Cloudflare
+AWS, Amazon Web Services
+Bybit
+Gemini API, Anthropic API, OpenAI API
+GitLab

@@ -117,3 +117,22 @@ Rôle : Maxime, de mauvaise humeur, qui a passé la soirée sur X. Poser :
 
 - La liste de questions négatives doit être **éditable sans toucher au code**.
 - Le contradicteur doit pouvoir être **désactivé**, pour comparer la qualité avec et sans (il devrait vite justifier son coût).
+
+---
+
+## État de l'implémentation (`synthese.py`)
+
+Fait, avec ces choix :
+
+- **Passe 1** : la fiche est produite par l'analyseur au fil de l'eau (un seul appel par item, déjà nécessaire pour la notation). Un signal de bruit plafonne la confiance à 0,3. Le niveau de la source vient de `config.py`.
+- **Passe 2** : un appel sur l'ensemble des fiches de la période, hors thème « autre ». Une fiche oubliée par le modèle forme son propre cluster. Le dossier vivant, la confiance (corroboration entre sources indépendantes), la première apparition et la première confirmation sont calculés sans modèle.
+- **Passe 3** : regroupée par lots de 25 clusters plutôt qu'un appel par cluster, pour le coût.
+- **Passes 4 et 5** : comme spécifié. Les liens absents des clusters sont retirés de la sortie. Les corrections du contradicteur vont au gap log, et la phrase d'avant correction reste visible pour comparer.
+- **Gap log** : relu à chaque synthèse (7 derniers jours) plutôt qu'une fois par semaine.
+- **Dossiers** : fermés après 7 jours sans mouvement.
+- **Réglages** : questions négatives, composants critiques, profil et contradicteur on/off sont modifiables depuis ⚙︎ sur le site.
+
+Pas encore fait :
+
+- La recherche active d'une source de niveau 1-3 pour un cluster `non_sourcé` : aucune source de niveau 4 (réseaux sociaux) n'est encore collectée.
+- Les alertes immédiates (push Telegram) et la réputation des sources apprise sur leur historique.

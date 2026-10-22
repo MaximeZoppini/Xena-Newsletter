@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import hashlib
 from pathlib import Path
@@ -104,7 +105,7 @@ class Storage:
                 conn.execute("ALTER TABLE articles ADD COLUMN image_url TEXT")
             except sqlite3.OperationalError:
                 pass
-            for col in ("chosen_style", "titre_fr", "chapo_fr", "statut", "confiance"):
+            for col in ("chosen_style", "titre_fr", "chapo_fr", "statut", "confiance", "theme", "fiche_json"):
                 try:
                     conn.execute(f"ALTER TABLE analyses ADD COLUMN {col} TEXT")
                 except sqlite3.OperationalError:
@@ -178,6 +179,33 @@ class Storage:
                     FOREIGN KEY (event_id) REFERENCES dossier_events(id)
                 )
             """)
+            # Synthèses 12 h : la phrase, les sections, les clusters notés et les corrections du contradicteur
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS syntheses (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    debut TEXT,
+                    phrase TEXT NOT NULL,
+                    contenu_json TEXT NOT NULL,
+                    clusters_json TEXT,
+                    corrections_json TEXT,
+                    contradicteur INTEGER DEFAULT 0,
+                    model TEXT,
+                    duree_s REAL
+                )
+            """)
+            # Gap log : items ratés, fausses alertes, corrections du contradicteur, retours de Maxime
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS gap_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    origine TEXT NOT NULL, -- 'contradicteur' ou 'maxime'
+                    type TEXT,
+                    detail TEXT NOT NULL,
+                    raison TEXT,
+                    synthese_id INTEGER
+                )
+            """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_dossier_articles_d ON dossier_articles(dossier_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_articles_ingested ON articles(ingested_at)")
@@ -222,9 +250,9 @@ class Storage:
             conn.execute("""
                 INSERT OR REPLACE INTO analyses (
                     article_id, systemic_impact, novelty_scoop, evidence_quality, global_score,
-                    factual_core, framing_detected, counter_view, source_quote, titre_fr, chapo_fr, statut, confiance
+                    factual_core, framing_detected, counter_view, source_quote, titre_fr, chapo_fr, statut, confiance, theme, fiche_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 article_id,
                 analysis.get("systemic_impact", 0),
@@ -239,6 +267,8 @@ class Storage:
                 analysis.get("chapo_fr", ""),
                 analysis.get("statut", ""),
                 analysis.get("confiance", ""),
+                analysis.get("theme", ""),
+                json.dumps(analysis["fiche"], ensure_ascii=False) if analysis.get("fiche") else None,
             ))
             conn.execute("UPDATE articles SET status = 'analyzed' WHERE id = ?", (article_id,))
             conn.commit()
@@ -343,8 +373,8 @@ class Storage:
         } for r in rows]
 
     # ------------------------------------------------------------- dossiers
-    def open_dossiers(self, days: int = 21, limit: int = 60) -> List[Dict[str, Any]]:
-        """Dossiers actifs récemment, avec leur état actuel (dernière phrase)."""
+    def open_dossiers(self, days: int = 7, limit: int = 60) -> List[Dict[str, Any]]:
+        """Dossiers ouverts (un dossier qui n'a pas bougé depuis `days` jours est fermé), avec leur état actuel."""
         with self._get_connection() as conn:
             rows = conn.execute("""
                 SELECT d.id, d.titre, d.updated_at,
@@ -404,6 +434,100 @@ class Storage:
         for e in events:
             e["articles"] = by_event.get(e["id"], [])
         return {**dict(d), "events": events}
+
+    def dossier_events_since(self, since: str) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            rows = conn.execute("""
+                SELECT e.dossier_id, d.titre, e.phrase, e.statut, e.created_at,
+                       (SELECT COUNT(*) FROM dossier_articles x WHERE x.event_id = e.id) AS sources
+                FROM dossier_events e JOIN dossiers d ON d.id = e.dossier_id
+                WHERE datetime(e.created_at) > datetime(?)
+                ORDER BY e.dossier_id, e.id
+            """, (since,)).fetchall()
+            return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------- synthèses
+    def articles_since(self, since: str, min_score: float) -> List[Dict[str, Any]]:
+        """Items analysés depuis `since` (UTC, format SQLite), hors thème « autre », avec leur fiche."""
+        with self._get_connection() as conn:
+            rows = conn.execute(f"""
+                SELECT {self._LIST_COLUMNS}, an.theme, an.fiche_json
+                FROM articles a
+                JOIN analyses an ON a.id = an.article_id
+                {self._LIST_JOINS}
+                WHERE datetime(a.ingested_at) > datetime(?)
+                  AND an.global_score >= ?
+                  AND COALESCE(an.theme, '') != 'autre'
+                ORDER BY a.ingested_at
+            """, (since, min_score)).fetchall()
+            return [dict(r) for r in rows]
+
+    def save_synthese(self, data: Dict[str, Any]) -> int:
+        with self._get_connection() as conn:
+            sid = conn.execute("""
+                INSERT INTO syntheses (debut, phrase, contenu_json, clusters_json, corrections_json, contradicteur, model, duree_s)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (data["debut"], data["phrase"], json.dumps(data["contenu"], ensure_ascii=False),
+                  json.dumps(data["clusters"], ensure_ascii=False), json.dumps(data["corrections"], ensure_ascii=False),
+                  1 if data["contradicteur"] else 0, data["model"], data["duree_s"])).lastrowid
+            conn.commit()
+            return sid
+
+    def _synthese_row(self, r) -> Dict[str, Any]:
+        return {
+            "id": r["id"], "created_at": r["created_at"], "debut": r["debut"], "phrase": r["phrase"],
+            "contenu": json.loads(r["contenu_json"]),
+            "clusters": json.loads(r["clusters_json"] or "[]"),
+            "corrections": json.loads(r["corrections_json"] or "[]"),
+            "contradicteur": bool(r["contradicteur"]), "model": r["model"], "duree_s": r["duree_s"],
+        }
+
+    def last_syntheses(self, n: int = 3) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            rows = conn.execute("SELECT * FROM syntheses ORDER BY id DESC LIMIT ?", (n,)).fetchall()
+            return [self._synthese_row(r) for r in rows]
+
+    def get_synthese(self, synthese_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+        """Une synthèse (la dernière par défaut), avec les ids de la précédente et de la suivante."""
+        with self._get_connection() as conn:
+            if synthese_id is None:
+                r = conn.execute("SELECT * FROM syntheses ORDER BY id DESC LIMIT 1").fetchone()
+            else:
+                r = conn.execute("SELECT * FROM syntheses WHERE id = ?", (synthese_id,)).fetchone()
+            if not r:
+                return None
+            prev = conn.execute("SELECT MAX(id) FROM syntheses WHERE id < ?", (r["id"],)).fetchone()[0]
+            nxt = conn.execute("SELECT MIN(id) FROM syntheses WHERE id > ?", (r["id"],)).fetchone()[0]
+        return {**self._synthese_row(r), "prev_id": prev, "next_id": nxt}
+
+    def log_gap(self, origine: str, detail: str, type_: str = "", raison: str = "", synthese_id: Optional[int] = None):
+        with self._get_connection() as conn:
+            conn.execute("INSERT INTO gap_log (origine, type, detail, raison, synthese_id) VALUES (?, ?, ?, ?, ?)",
+                         (origine, type_, detail, raison, synthese_id))
+            conn.commit()
+
+    def recent_gaps(self, days: int = 7, limit: int = 60) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            rows = conn.execute("""
+                SELECT created_at, origine, type, detail, raison FROM gap_log
+                WHERE datetime(created_at) >= datetime('now', ?)
+                ORDER BY id DESC LIMIT ?
+            """, (f"-{days} days", limit)).fetchall()
+            return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------- état
+    def get_state(self, key: str) -> Optional[str]:
+        with self._get_connection() as conn:
+            row = conn.execute("SELECT value FROM app_state WHERE key = ?", (key,)).fetchone()
+            return row["value"] if row else None
+
+    def set_state(self, key: str, value: str):
+        with self._get_connection() as conn:
+            conn.execute("""
+                INSERT INTO app_state (key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+            """, (key, value))
+            conn.commit()
 
     def save_brief(self, article_id: str, brief_json: str, source_text: str, model: str):
         with self._get_connection() as conn:

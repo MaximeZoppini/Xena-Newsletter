@@ -33,6 +33,17 @@
         <option value="browser">Navigateur (gratuite)</option>
       </select>
     </label>
+    <label class="wide">Composants critiques <small>un par ligne, synonymes séparés par des virgules</small>
+      <textarea id="r-composants_critiques" rows="8"></textarea>
+    </label>
+    <label class="wide">Questions négatives de la synthèse <small>une par ligne</small>
+      <textarea id="r-questions_negatives" rows="7"></textarea>
+    </label>
+    <label class="wide">Profil <small>sert à juger l'impact sur toi</small>
+      <textarea id="r-profil" rows="4"></textarea>
+    </label>
+    <label class="check"><input type="checkbox" id="r-contradicteur"> Contradicteur de la synthèse</label>
+    <div class="wide"><button class="btn" id="r-save">Enregistrer</button> <span class="note" id="r-status"></span></div>
   </div>
 
   <main id="feed" class="feed"></main>

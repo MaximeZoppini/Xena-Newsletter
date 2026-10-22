@@ -8,6 +8,7 @@ from dossiers import Threader
 from config import FEEDS, DATABASE_PATH, MIN_INTEREST_SCORE, POLL_INTERVAL_SECONDS, WEB_HOST, WEB_PORT
 from sources import get_all_new_candidates
 from storage import Storage
+from synthese import Synthesizer
 from web import start_web_server
 
 logging.basicConfig(
@@ -54,12 +55,14 @@ def run_pipeline_cycle(storage: Storage, analyzer: NewsAnalyzer, briefer: Briefe
 
 def rescore(storage: Storage, analyzer: NewsAnalyzer, briefer: Briefer, threader: Threader, days: int):
     """Applique la grille de notation actuelle aux articles déjà en base."""
-    bias = {f["name"]: f["known_bias"] for f in FEEDS}
+    feeds = {f["name"]: f for f in FEEDS}
     rows = storage.list_recent(min_score=0.0, hours=days * 24, limit=5000)
     logger.info(f"Nouvelle notation de {len(rows)} article(s)...")
     for r in rows:
         item = {"id": r["id"], "title": r["title"], "url": r["url"], "source": r["source"],
-                "summary": r["raw_summary"] or "", "known_bias": bias.get(r["source"], "Non précisé")}
+                "summary": r["raw_summary"] or "", "published_at": r["published_at"] or "",
+                "known_bias": feeds.get(r["source"], {}).get("known_bias", "Non précisé"),
+                "source_level": feeds.get(r["source"], {}).get("level", 3)}
         analysis = analyzer.analyze(item)
         if not analysis:
             continue
@@ -80,6 +83,7 @@ def main():
                         help="Prépare fiches et versions audio courtes des news importantes des N derniers jours puis quitte")
     parser.add_argument("--rescore-days", type=int, metavar="N",
                         help="Re-note les articles des N derniers jours avec la grille actuelle puis quitte")
+    parser.add_argument("--synthese", action="store_true", help="Produit une synthèse 12 h maintenant puis quitte")
     parser.add_argument("--once", action="store_true", help="Exécute un seul cycle puis quitte")
     args = parser.parse_args()
 
@@ -87,10 +91,15 @@ def main():
     analyzer = NewsAnalyzer(storage=storage)
     briefer = Briefer(storage)
     threader = Threader(storage)
+    synthesizer = Synthesizer(storage)
 
     if args.test_sources:
         candidates = get_all_new_candidates(storage)
         print(f"Trouvé {len(candidates)} items bruts.")
+        return
+
+    if args.synthese:
+        synthesizer.run()
         return
 
     if args.rescore_days:
@@ -123,6 +132,7 @@ def main():
     while True:
         try:
             run_pipeline_cycle(storage, analyzer, briefer, threader)
+            synthesizer.maybe_run()
         except Exception as e:
             logger.error(f"Erreur inattendue dans la boucle : {e}", exc_info=True)
         time.sleep(POLL_INTERVAL_SECONDS)
