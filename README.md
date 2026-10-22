@@ -4,6 +4,7 @@ Xena lit en continu des médias d'investigation et tech, note chaque publication
 
 - **À lire** : une fiche en français pour chaque news importante — l'essentiel, le récit, pourquoi ça compte, la version de la partie mise en cause, les concepts expliqués.
 - **À écouter** : un résumé audio lu calmement (voix Gemini, générée une fois puis mise en cache).
+- **À suivre** : une histoire qui évolue est un seul **dossier vivant**. Sa carte dit en une phrase où en est la situation (« Trump suspend les discussions avec Moscou », puis « Trump relance les négociations avec la Russie ») ; le fil se déplie étape par étape, les nouvelles depuis la dernière lecture en avant.
 - **À discuter** : on parle à voix haute à une IA de haut niveau sur l'article ou un concept qu'on ne comprend pas. Pas de coupure automatique : on prend le temps de formuler, on appuie pour envoyer. Réponse lue lentement, vitesse réglable.
 
 ## Pipeline
@@ -14,6 +15,8 @@ flowchart LR
     K -- non --> J[Pré-filtre TypeSafe Jev\noptionnel]
     J --> G[Gemini Flash\nnotation /10 + titre FR]
     G --> DB[(SQLite)]
+    G -- score ≥ 7 --> T[Dossier vivant\névolution / corroboration / nouveau]
+    T --> DB
     G -- score ≥ 7 --> B[Lecture de l'article complet\n+ fiche en français]
     B --> DB
     DB --> W[Site web]
@@ -23,6 +26,8 @@ flowchart LR
 
 **Priorité** : les avancées technologiques et scientifiques et les annonces vraiment nouvelles (dévoilements, percées, nouveaux modèles d'IA, spatial, découvertes publiées), puis les grandes révélations d'investigation.
 **Score** = 0,40 × portée + 0,35 × rupture + 0,25 × solidité (démontré, publié, officiel vs rumeur). Dans le fil, un point indique l'importance : rouge ≥ 8,5, orange ≥ 7,5, jaune ≥ 6,5, blanc en dessous.
+**Confiance** : chaque news porte un statut (confirmé / allégué / démenti) et sa raison en une ligne, en tête de la fiche. Dans le fil, rien quand c'est confirmé, « ? » quand c'est allégué, « ✗ » quand c'est démenti.
+**Dossiers** : chaque news importante est rangée par Gemini Flash (un appel de plus par news ≥ 7). Si elle change l'état d'un dossier, une étape s'ajoute au fil ; si elle raconte un fait déjà connu, elle compte comme source supplémentaire (×2, ×3…) et n'est pas relue dans le flash audio. Au démarrage, les news des dernières 24 h sans dossier sont rangées une fois.
 Ligne éditoriale : neutralité sur le fond, rien n'est inventé au-delà de la source, aucun contournement de paywall.
 
 ## Fichiers
@@ -32,6 +37,7 @@ Ligne éditoriale : neutralité sur le fond, rien n'est inventé au-delà de la 
 | `main.py` | Boucle de veille + démarrage du site |
 | `sources.py` | Ingestion RSS / Hacker News |
 | `analyzer.py` | Notation et accroche FR (Gemini Flash, pré-filtre Jev) |
+| `dossiers.py` | Dossiers vivants : rangement des news et fil d'évolution |
 | `briefing.py` | Fiche de lecture, voix (TTS), conversation |
 | `web.py` + `static/` | Site et API JSON |
 | `storage.py` | SQLite |

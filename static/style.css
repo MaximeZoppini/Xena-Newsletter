@@ -89,12 +89,27 @@ a { color: inherit; }
 .imp-yellow { background: #e9c629; }
 .imp-white { background: #fff; box-shadow: inset 0 0 0 1px #b9b6ae; }
 .card.seen { opacity: .55; }
+.card.seen:has(> .details:not([hidden])), .card.seen .card.seen { opacity: 1; }
 .card h2 {
   flex: 1; min-width: 0;
   font-family: var(--serif); font-size: 17px; font-weight: 600; line-height: 1.32; margin: 2px 0 0;
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
 .thumb { width: 68px; height: 68px; border-radius: 10px; object-fit: cover; flex: none; background: var(--line); }
+.card-text { flex: 1; min-width: 0; }
+.etat { margin: 4px 0 2px; font-size: 15px; color: var(--muted); }
+.st { display: inline-block; font-weight: 700; font-size: 13px; margin-right: 6px; color: var(--muted); }
+.st-dementi { color: var(--accent); }
+.confiance { font-size: 14px; color: var(--muted); margin: 0 0 10px; }
+.badge.new { color: var(--accent); }
+.step { border-left: 2px solid var(--line); padding: 0 0 10px 12px; margin-left: 4px; }
+.step.new { border-left-color: var(--accent); }
+.step-head { display: flex; gap: 10px; align-items: baseline; cursor: pointer; }
+.step-date { flex: none; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.step-phrase { flex: 1; font-family: var(--serif); font-size: 16px; }
+.step:not(.new) .step-phrase { color: var(--muted); }
+.step-n { flex: none; font-size: 12px; color: var(--muted); }
+.step-articles { margin-top: 8px; }
 .card-actions { display: flex; gap: 2px; margin: 2px 0 0 -8px; }
 .card-actions .ibtn { font-size: 16px; opacity: .8; }
 .details { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 12px; }

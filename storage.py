@@ -104,7 +104,7 @@ class Storage:
                 conn.execute("ALTER TABLE articles ADD COLUMN image_url TEXT")
             except sqlite3.OperationalError:
                 pass
-            for col in ("chosen_style", "titre_fr", "chapo_fr"):
+            for col in ("chosen_style", "titre_fr", "chapo_fr", "statut", "confiance"):
                 try:
                     conn.execute(f"ALTER TABLE analyses ADD COLUMN {col} TEXT")
                 except sqlite3.OperationalError:
@@ -148,6 +148,37 @@ class Storage:
                     FOREIGN KEY (conversation_id) REFERENCES conversations(id)
                 )
             """)
+            # Dossiers vivants : une même histoire suivie dans le temps, une phrase par changement d'état
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS dossiers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    titre TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS dossier_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    dossier_id INTEGER NOT NULL,
+                    phrase TEXT NOT NULL,
+                    statut TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (dossier_id) REFERENCES dossiers(id)
+                )
+            """)
+            # role : 'evolution' (l'article fait avancer le dossier) ou 'corroboration' (autre source du même fait)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS dossier_articles (
+                    article_id TEXT PRIMARY KEY,
+                    dossier_id INTEGER NOT NULL,
+                    event_id INTEGER NOT NULL,
+                    role TEXT NOT NULL,
+                    FOREIGN KEY (dossier_id) REFERENCES dossiers(id),
+                    FOREIGN KEY (event_id) REFERENCES dossier_events(id)
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_dossier_articles_d ON dossier_articles(dossier_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_articles_ingested ON articles(ingested_at)")
             conn.commit()
@@ -191,9 +222,9 @@ class Storage:
             conn.execute("""
                 INSERT OR REPLACE INTO analyses (
                     article_id, systemic_impact, novelty_scoop, evidence_quality, global_score,
-                    factual_core, framing_detected, counter_view, source_quote, titre_fr, chapo_fr
+                    factual_core, framing_detected, counter_view, source_quote, titre_fr, chapo_fr, statut, confiance
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 article_id,
                 analysis.get("systemic_impact", 0),
@@ -206,6 +237,8 @@ class Storage:
                 analysis.get("source_quote", ""),
                 analysis.get("titre_fr", ""),
                 analysis.get("chapo_fr", ""),
+                analysis.get("statut", ""),
+                analysis.get("confiance", ""),
             ))
             conn.execute("UPDATE articles SET status = 'analyzed' WHERE id = ?", (article_id,))
             conn.commit()
@@ -214,11 +247,19 @@ class Storage:
         a.id, a.url, a.title, a.source, a.category, a.raw_summary, a.published_at, a.ingested_at, a.image_url,
         an.global_score, an.systemic_impact, an.novelty_scoop, an.evidence_quality,
         an.factual_core, an.framing_detected, an.counter_view, an.source_quote,
-        an.titre_fr, an.chapo_fr, b.brief_json, (s.article_id IS NOT NULL) AS seen
+        an.titre_fr, an.chapo_fr, an.statut, an.confiance, b.brief_json, (s.article_id IS NOT NULL) AS seen,
+        da.dossier_id, da.role AS dossier_role, d.titre AS dossier_titre,
+        (SELECT COUNT(*) FROM dossier_articles x WHERE x.dossier_id = da.dossier_id) AS dossier_n,
+        (SELECT COUNT(*) FROM dossier_articles x LEFT JOIN seen sx ON sx.article_id = x.article_id
+          WHERE x.dossier_id = da.dossier_id AND sx.article_id IS NULL) AS dossier_unseen,
+        (SELECT e.phrase FROM dossier_events e WHERE e.dossier_id = da.dossier_id ORDER BY e.id DESC LIMIT 1) AS dossier_etat,
+        (SELECT e.statut FROM dossier_events e WHERE e.dossier_id = da.dossier_id ORDER BY e.id DESC LIMIT 1) AS dossier_statut
     """
     _LIST_JOINS = """
         LEFT JOIN briefs b ON a.id = b.article_id
         LEFT JOIN seen s ON a.id = s.article_id
+        LEFT JOIN dossier_articles da ON a.id = da.article_id
+        LEFT JOIN dossiers d ON d.id = da.dossier_id
     """
 
     def list_articles(self, min_score: float = 0.0, limit: int = 40, offset: int = 0) -> List[Dict[str, Any]]:
@@ -245,7 +286,8 @@ class Storage:
             """, (article_id,)).fetchone()
             return dict(row) if row else None
 
-    def list_recent(self, min_score: float, hours: int, unseen_only: bool = False, limit: int = 150) -> List[Dict[str, Any]]:
+    def list_recent(self, min_score: float, hours: int, unseen_only: bool = False, limit: int = 150,
+                    skip_corroborations: bool = False) -> List[Dict[str, Any]]:
         """News importantes des dernières heures, de la plus ancienne à la plus récente."""
         with self._get_connection() as conn:
             rows = conn.execute(f"""
@@ -256,6 +298,7 @@ class Storage:
                 WHERE an.global_score >= ?
                   AND datetime(a.ingested_at) >= datetime('now', ?)
                   {"AND s.article_id IS NULL" if unseen_only else ""}
+                  {"AND COALESCE(da.role, '') != 'corroboration'" if skip_corroborations else ""}
                 ORDER BY a.ingested_at DESC
                 LIMIT ?
             """, (min_score, f"-{hours} hours", limit)).fetchall()
@@ -298,6 +341,69 @@ class Storage:
             "role": r["role"], "text": r["text"], "article_id": r["article_id"], "created_at": r["created_at"],
             "queries": json.loads(r["queries_json"] or "[]"), "sources": json.loads(r["sources_json"] or "[]"),
         } for r in rows]
+
+    # ------------------------------------------------------------- dossiers
+    def open_dossiers(self, days: int = 21, limit: int = 60) -> List[Dict[str, Any]]:
+        """Dossiers actifs récemment, avec leur état actuel (dernière phrase)."""
+        with self._get_connection() as conn:
+            rows = conn.execute("""
+                SELECT d.id, d.titre, d.updated_at,
+                       (SELECT e.phrase FROM dossier_events e WHERE e.dossier_id = d.id ORDER BY e.id DESC LIMIT 1) AS etat
+                FROM dossiers d
+                WHERE datetime(d.updated_at) >= datetime('now', ?)
+                ORDER BY d.updated_at DESC
+                LIMIT ?
+            """, (f"-{days} days", limit)).fetchall()
+            return [dict(r) for r in rows]
+
+    def attach_to_dossier(self, article_id: str, dossier_id: Optional[int], titre: str,
+                          phrase: str, statut: str, evolution: bool) -> int:
+        """Range un article dans un dossier (créé au besoin). Retourne l'id du dossier."""
+        with self._get_connection() as conn:
+            if dossier_id is None:
+                dossier_id = conn.execute("INSERT INTO dossiers (titre) VALUES (?)", (titre,)).lastrowid
+                evolution = True
+            last = conn.execute("SELECT id FROM dossier_events WHERE dossier_id = ? ORDER BY id DESC LIMIT 1",
+                                (dossier_id,)).fetchone()
+            if evolution or not last:
+                event_id = conn.execute("INSERT INTO dossier_events (dossier_id, phrase, statut) VALUES (?, ?, ?)",
+                                        (dossier_id, phrase, statut)).lastrowid
+                role = "evolution"
+            else:
+                event_id, role = last["id"], "corroboration"
+            conn.execute("INSERT OR REPLACE INTO dossier_articles (article_id, dossier_id, event_id, role) VALUES (?, ?, ?, ?)",
+                         (article_id, dossier_id, event_id, role))
+            conn.execute("UPDATE dossiers SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", (dossier_id,))
+            conn.commit()
+            return dossier_id
+
+    def is_in_dossier(self, article_id: str) -> bool:
+        with self._get_connection() as conn:
+            return conn.execute("SELECT 1 FROM dossier_articles WHERE article_id = ?", (article_id,)).fetchone() is not None
+
+    def get_dossier(self, dossier_id: int) -> Optional[Dict[str, Any]]:
+        """Le dossier et son fil, du plus récent au plus ancien, avec les articles de chaque étape."""
+        with self._get_connection() as conn:
+            d = conn.execute("SELECT id, titre, created_at, updated_at FROM dossiers WHERE id = ?", (dossier_id,)).fetchone()
+            if not d:
+                return None
+            events = [dict(e) for e in conn.execute(
+                "SELECT id, phrase, statut, created_at FROM dossier_events WHERE dossier_id = ? ORDER BY id DESC",
+                (dossier_id,)).fetchall()]
+            rows = conn.execute(f"""
+                SELECT {self._LIST_COLUMNS}, da.event_id
+                FROM articles a
+                LEFT JOIN analyses an ON a.id = an.article_id
+                {self._LIST_JOINS}
+                WHERE da.dossier_id = ?
+                ORDER BY a.ingested_at
+            """, (dossier_id,)).fetchall()
+        by_event: Dict[int, List[Dict[str, Any]]] = {}
+        for r in rows:
+            by_event.setdefault(r["event_id"], []).append(dict(r))
+        for e in events:
+            e["articles"] = by_event.get(e["id"], [])
+        return {**dict(d), "events": events}
 
     def save_brief(self, article_id: str, brief_json: str, source_text: str, model: str):
         with self._get_connection() as conn:

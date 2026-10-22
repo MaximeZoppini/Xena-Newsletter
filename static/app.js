@@ -240,7 +240,7 @@ async function playFlash() {
 
 // ------------------------------------------------------------------ fil d'actu
 let filtre = store.get("xena-filtre", "top");
-let feedState = { offset: 0, lastDay: null };
+let feedState = { offset: 0, lastDay: null, dossiers: new Set() };
 
 function initTabs() {
   document.querySelectorAll(".tab").forEach((t) => {
@@ -257,7 +257,7 @@ function initTabs() {
 async function renderFeed() {
   const feed = $("#feed");
   feed.replaceChildren(h("div", { class: "loading" }, "Chargement…"));
-  feedState = { offset: 0, lastDay: null };
+  feedState = { offset: 0, lastDay: null, dossiers: new Set() };
   const list = h("div", {});
   const more = h("button", { class: "btn ghost more", onclick: () => loadMore(list, more) }, "Plus de news");
   await loadMore(list, more);
@@ -272,13 +272,17 @@ async function loadMore(list, more) {
     feedState.offset += data.articles.length;
     for (const a of data.articles) {
       if (a.seen) seenIds.add(a.id);
+      // Un dossier de plusieurs articles n'apparaît qu'une fois, au jour de sa dernière évolution
+      const dossier = a.dossier?.n > 1 ? a.dossier : null;
+      if (dossier && feedState.dossiers.has(dossier.id)) continue;
       const d = parseDate(a.ingested_at);
       const day = d ? dayLabel(d) : "";
       if (day !== feedState.lastDay) {
         list.append(h("div", { class: "day" }, day));
         feedState.lastDay = day;
       }
-      list.append(renderCard(a));
+      if (dossier) feedState.dossiers.add(dossier.id);
+      list.append(dossier ? renderDossierCard(a) : renderCard(a));
     }
     more.hidden = data.articles.length < 40;
   } catch (e) {
@@ -296,12 +300,19 @@ function importance(score) {
   return { cls: "imp-white", label: "Secondaire" };
 }
 
+// Confiance d'un coup d'œil : rien quand c'est confirmé, « ? » quand c'est allégué, « ✗ » quand c'est démenti
+function statutMark(statut) {
+  if (statut === "allegue") return h("span", { class: "st st-allegue", title: "Allégué" }, "?");
+  if (statut === "dementi") return h("span", { class: "st st-dementi", title: "Démenti" }, "✗");
+  return null;
+}
+
 function renderCard(a) {
   const details = h("div", { class: "details", hidden: true });
   const imp = importance(a.score ?? 0);
   return h("article", { class: "card" + (a.seen ? " seen" : ""), "data-card": a.id },
     h("div", { class: "card-main", onclick: (e) => { if (!e.target.closest("button")) toggleDetails(a, details); } },
-      h("h2", {}, h("span", { class: `imp ${imp.cls}`, title: imp.label }), a.titre),
+      h("h2", {}, h("span", { class: `imp ${imp.cls}`, title: imp.label }), statutMark(a.statut), a.titre),
       a.image ? h("img", { class: "thumb", src: a.image, alt: "", loading: "lazy", referrerpolicy: "no-referrer",
         onerror: (e) => e.target.remove() }) : null,
     ),
@@ -312,6 +323,69 @@ function renderCard(a) {
     ),
     details,
   );
+}
+
+// ------------------------------------------------------------------ dossiers vivants
+// Une histoire qui évolue = une carte : son nom, puis où en est la situation, en une phrase.
+// Le fil se déplie : une étape par changement d'état, les nouvelles depuis la dernière lecture en avant.
+function renderDossierCard(a) {
+  const d = a.dossier;
+  const details = h("div", { class: "details", hidden: true });
+  const imp = importance(a.score ?? 0);
+  const open = () => toggleDossier(d, details);
+  return h("article", { class: "card dossier" + (d.unseen ? "" : " seen"), "data-dossier": d.id },
+    h("div", { class: "card-main", onclick: (e) => { if (!e.target.closest("button")) open(); } },
+      h("div", { class: "card-text" },
+        h("h2", {}, h("span", { class: `imp ${imp.cls}`, title: imp.label }), d.titre),
+        h("p", { class: "etat" }, statutMark(d.statut), d.etat),
+      ),
+    ),
+    h("div", { class: "card-actions" },
+      h("button", { class: "ibtn", "aria-label": "Suivre le fil", onclick: open }, "🧵",
+        d.unseen ? h("span", { class: "badge new" }, d.unseen) : null),
+      h("button", { class: "ibtn", "aria-label": "Écouter", onclick: () => listenArticle(a) }, "▶"),
+      h("button", { class: "ibtn", "aria-label": "En parler", onclick: () => openChat(a) }, "🎙"),
+    ),
+    details,
+  );
+}
+
+function shortDate(s) {
+  const d = parseDate(s);
+  if (!d) return "";
+  return d.toLocaleDateString("fr-FR", { day: "numeric", month: "short" }) + " " +
+    d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+}
+
+async function toggleDossier(d, details) {
+  if (!details.hidden) { details.hidden = true; return; }
+  details.hidden = false;
+  if (details.dataset.loaded) return;
+  details.replaceChildren(h("p", { class: "note" }, "…"));
+  try {
+    const data = await (await api(`/api/dossiers/${d.id}`)).json();
+    details.replaceChildren(...data.events.map((e) => {
+      const isNew = e.articles.some((x) => !x.seen && !seenIds.has(x.id));
+      const sub = h("div", { class: "step-articles", hidden: true }, e.articles.map(renderCard));
+      return h("div", { class: "step" + (isNew ? " new" : "") },
+        h("div", { class: "step-head", onclick: () => { sub.hidden = !sub.hidden; } },
+          h("span", { class: "step-date" }, shortDate(e.created_at)),
+          h("span", { class: "step-phrase" }, statutMark(e.statut), e.phrase),
+          e.articles.length > 1 ? h("span", { class: "step-n", title: "Sources" }, `×${e.articles.length}`) : null,
+        ),
+        sub,
+      );
+    }));
+    details.dataset.loaded = "1";
+    // Le fil a été lu : la prochaine fois, seules les nouvelles étapes ressortent
+    data.events.forEach((e) => e.articles.forEach((x) => markSeen(x.id)));
+    document.querySelectorAll(`[data-dossier="${d.id}"]`).forEach((c) => {
+      c.classList.add("seen");
+      c.querySelector(".badge.new")?.remove();
+    });
+  } catch (e) {
+    details.replaceChildren(h("p", { class: "note" }, "Erreur : " + e.message));
+  }
 }
 
 async function toggleDetails(a, details) {
@@ -337,6 +411,7 @@ function renderBrief(a, full) {
   const b = full.brief || {};
   const section = (title, ...content) => h("section", {}, h("h3", {}, title), ...content);
   return [
+    full.confiance ? h("p", { class: "confiance" }, statutMark(full.statut), full.confiance) : null,
     h("p", { class: "lead" }, b.chapo || a.chapo),
     h("div", { class: "prose" }, (b.recit?.length ? b.recit : [full.factual_core || ""]).map((p) => h("p", {}, p))),
     b.pourquoi_ca_compte ? section("Pourquoi ça compte", h("div", { class: "prose" }, h("p", {}, b.pourquoi_ca_compte))) : null,

@@ -4,6 +4,7 @@ import time
 
 from analyzer import NewsAnalyzer
 from briefing import Briefer
+from dossiers import Threader
 from config import FEEDS, DATABASE_PATH, MIN_INTEREST_SCORE, POLL_INTERVAL_SECONDS, WEB_HOST, WEB_PORT
 from sources import get_all_new_candidates
 from storage import Storage
@@ -16,7 +17,8 @@ logging.basicConfig(
 logger = logging.getLogger("main")
 
 
-def run_pipeline_cycle(storage: Storage, analyzer: NewsAnalyzer, briefer: Briefer, dry_run: bool = False):
+def run_pipeline_cycle(storage: Storage, analyzer: NewsAnalyzer, briefer: Briefer, threader: Threader,
+                       dry_run: bool = False):
     """
     Veille continue : récupère les nouvelles publications, les fait noter par l'IA,
     et prépare la fiche de lecture complète des news importantes.
@@ -43,13 +45,14 @@ def run_pipeline_cycle(storage: Storage, analyzer: NewsAnalyzer, briefer: Briefe
         storage.save_analysis(item["id"], analysis)
         logger.info(f"📥 '{item['title'][:50]}...' -> {score}/10")
         if score >= MIN_INTEREST_SCORE:
+            threader.thread(item["id"])
             # Fiche + version audio courte prêtes d'avance : le flash « Ce que j'ai raté » démarre sans attente
             briefer.get_or_create_brief(item["id"])
             briefer.ensure_image(item["id"])
             briefer.get_or_create_short_audio(item["id"])
 
 
-def rescore(storage: Storage, analyzer: NewsAnalyzer, briefer: Briefer, days: int):
+def rescore(storage: Storage, analyzer: NewsAnalyzer, briefer: Briefer, threader: Threader, days: int):
     """Applique la grille de notation actuelle aux articles déjà en base."""
     bias = {f["name"]: f["known_bias"] for f in FEEDS}
     rows = storage.list_recent(min_score=0.0, hours=days * 24, limit=5000)
@@ -62,6 +65,7 @@ def rescore(storage: Storage, analyzer: NewsAnalyzer, briefer: Briefer, days: in
             continue
         storage.save_analysis(r["id"], analysis)
         if analysis.get("global_score", 0.0) >= MIN_INTEREST_SCORE:
+            threader.thread(r["id"])
             briefer.get_or_create_brief(r["id"])
             briefer.ensure_image(r["id"])
             briefer.get_or_create_short_audio(r["id"])
@@ -82,6 +86,7 @@ def main():
     storage = Storage(DATABASE_PATH)
     analyzer = NewsAnalyzer(storage=storage)
     briefer = Briefer(storage)
+    threader = Threader(storage)
 
     if args.test_sources:
         candidates = get_all_new_candidates(storage)
@@ -89,7 +94,7 @@ def main():
         return
 
     if args.rescore_days:
-        rescore(storage, analyzer, briefer, args.rescore_days)
+        rescore(storage, analyzer, briefer, threader, args.rescore_days)
         return
 
     if args.backfill_days:
@@ -103,15 +108,21 @@ def main():
         return
 
     if args.dry_run or args.once:
-        run_pipeline_cycle(storage, analyzer, briefer, dry_run=args.dry_run)
+        run_pipeline_cycle(storage, analyzer, briefer, threader, dry_run=args.dry_run)
         return
 
     start_web_server(storage, briefer, host=WEB_HOST, port=WEB_PORT)
     logger.info(f"🚀 Xena active : veille toutes les {POLL_INTERVAL_SECONDS}s, site sur http://{WEB_HOST}:{WEB_PORT}")
 
+    # News importantes des dernières 24 h arrivées avant les dossiers (ou pendant un redémarrage) : rangées une fois
+    try:
+        threader.catch_up(hours=24)
+    except Exception as e:
+        logger.error(f"Rangement initial en dossiers : {e}", exc_info=True)
+
     while True:
         try:
-            run_pipeline_cycle(storage, analyzer, briefer)
+            run_pipeline_cycle(storage, analyzer, briefer, threader)
         except Exception as e:
             logger.error(f"Erreur inattendue dans la boucle : {e}", exc_info=True)
         time.sleep(POLL_INTERVAL_SECONDS)

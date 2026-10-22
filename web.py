@@ -20,6 +20,7 @@ logger = logging.getLogger("web")
 
 MAX_BODY = 25 * 1024 * 1024  # ~10 min d'audio WAV 16 kHz
 ARTICLE_RE = re.compile(r"^/api/articles/([0-9a-f]{16})(/audio)?$")
+DOSSIER_RE = re.compile(r"^/api/dossiers/(\d{1,9})$")
 CONV_RE = re.compile(r"^/api/conversations/([0-9a-zA-Z-]{8,64})$")
 AUDIO_TYPES = {"audio/mp4", "audio/aac", "audio/webm", "audio/ogg", "audio/wav", "audio/mpeg"}
 
@@ -45,6 +46,16 @@ def _article_card(row: dict) -> dict:
         "chapo": brief.get("chapo") or row.get("chapo_fr") or row.get("factual_core") or row.get("raw_summary") or "",
         "has_brief": bool(brief),
         "seen": bool(row.get("seen")),
+        "statut": row.get("statut") or "",
+        "confiance": row.get("confiance") or "",
+        "dossier": {
+            "id": row["dossier_id"],
+            "titre": row.get("dossier_titre") or "",
+            "etat": row.get("dossier_etat") or "",
+            "statut": row.get("dossier_statut") or "",
+            "n": row.get("dossier_n") or 0,
+            "unseen": row.get("dossier_unseen") or 0,
+        } if row.get("dossier_id") is not None else None,
     }
 
 
@@ -114,11 +125,21 @@ class Handler(BaseHTTPRequestHandler):
                     "framing": row.get("framing_detected"),
                     "source_quote": row.get("source_quote"),
                 })
+            dm = DOSSIER_RE.match(url.path)
+            if dm:
+                d = self.storage.get_dossier(int(dm.group(1)))
+                if not d:
+                    return self._json(404, {"error": "dossier introuvable"})
+                for e in d["events"]:
+                    e["articles"] = [_article_card(r) for r in e["articles"] if r.get("global_score") is not None]
+                return self._json(200, d)
             c = CONV_RE.match(url.path)
             if c:
                 return self._json(200, {"messages": self.storage.get_messages(c.group(1))})
             if url.path == "/api/flash":
-                rows = self.storage.list_recent(min_score=MIN_INTEREST_SCORE, hours=72, unseen_only=True, limit=20)
+                # Une autre source d'un fait déjà connu n'apporte rien à l'oreille
+                rows = self.storage.list_recent(min_score=MIN_INTEREST_SCORE, hours=72, unseen_only=True, limit=20,
+                                                skip_corroborations=True)
                 return self._json(200, {"articles": [_article_card(r) for r in rows]})
             if m and m.group(2):
                 court = parse_qs(url.query).get("version", [""])[0] == "court"
