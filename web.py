@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import reglages
+from alertes import Alerter
 from briefing import Briefer
 from config import MIN_INTEREST_SCORE, STATIC_DIR
 from storage import Storage
@@ -63,6 +64,7 @@ def _article_card(row: dict) -> dict:
 class Handler(BaseHTTPRequestHandler):
     storage: Storage = None
     briefer: Briefer = None
+    alerter: Alerter = None
 
     def log_message(self, fmt, *args):
         logger.debug(fmt % args)
@@ -85,12 +87,12 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError("Corps de requête invalide")
         return json.loads(self.rfile.read(length))
 
-    def _static(self, rel: str):
+    def _static(self, rel: str, ctype: str = ""):
         root = Path(STATIC_DIR).resolve()
         path = (root / rel).resolve()
         if root not in path.parents or not path.is_file():
             return self._json(404, {"error": "introuvable"})
-        ctype = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        ctype = ctype or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         if ctype.startswith("text/") or ctype in ("application/javascript", "application/json"):
             ctype += "; charset=utf-8"
         self._send(200, path.read_bytes(), ctype, cache="no-cache")
@@ -101,6 +103,17 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if url.path in ("/", "/index.html"):
                 return self._static("index.html")
+            # Service worker servi à la racine pour couvrir tout le site (notifications push)
+            if url.path == "/sw.js":
+                return self._static("sw.js", "application/javascript")
+            if url.path == "/manifest.webmanifest":
+                return self._static("manifest.webmanifest", "application/manifest+json")
+            if url.path == "/api/push/key":
+                return self._json(200, {"key": self.alerter.public_key()})
+            if url.path == "/api/push/status":
+                endpoint = parse_qs(url.query).get("endpoint", [""])[0]
+                return self._json(200, {"actif": bool(endpoint) and self.storage.has_subscription(endpoint),
+                                        "derniers": self.storage.recent_pushes(10)})
             if url.path.startswith("/static/"):
                 return self._static(url.path[len("/static/"):])
             if url.path == "/api/articles":
@@ -137,6 +150,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, {
                     **{name: reglages.get_text(self.storage, name) for name in reglages.TEXTES},
                     "contradicteur": reglages.contradicteur_actif(self.storage),
+                    "seuil_push": reglages.seuil_push(self.storage),
                 })
             dm = DOSSIER_RE.match(url.path)
             if dm:
@@ -189,7 +203,27 @@ class Handler(BaseHTTPRequestHandler):
                         reglages.set_text(self.storage, name, body[name][:20000])
                 if isinstance(body.get("contradicteur"), bool):
                     reglages.set_contradicteur(self.storage, body["contradicteur"])
+                if isinstance(body.get("seuil_push"), str):
+                    reglages.set_seuil_push(self.storage, body["seuil_push"])
                 return self._json(200, {"ok": True})
+            if url.path == "/api/push/subscribe":
+                sub = body.get("subscription") or {}
+                endpoint = sub.get("endpoint") or ""
+                if not endpoint.startswith("https://") or not (sub.get("keys") or {}).get("p256dh"):
+                    return self._json(400, {"error": "abonnement invalide"})
+                self.storage.save_subscription(endpoint, json.dumps(sub), self.headers.get("User-Agent", "")[:300])
+                host = (self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "").split(":")[0]
+                if re.fullmatch(r"[\w-]+(\.[\w-]+)+", host):
+                    self.storage.set_state("site_origin", f"https://{host}")
+                return self._json(200, {"ok": True})
+            if url.path == "/api/push/unsubscribe":
+                self.storage.delete_subscription(body.get("endpoint") or "")
+                return self._json(200, {"ok": True})
+            if url.path == "/api/push/test":
+                endpoint = body.get("endpoint") or ""
+                sent = self.alerter.send({"title": "Xena", "body": "Les notifications fonctionnent sur cet appareil.",
+                                          "url": "/", "tag": "xena-test"}, endpoints=[endpoint])
+                return self._json(200 if sent else 502, {"ok": bool(sent), "error": "" if sent else "envoi refusé"})
             if url.path == "/api/seen":
                 ids = [i for i in body.get("ids", []) if isinstance(i, str) and re.fullmatch(r"[0-9a-f]{16}", i)]
                 self.storage.mark_seen(ids)
@@ -223,9 +257,10 @@ class Handler(BaseHTTPRequestHandler):
                 pass
 
 
-def start_web_server(storage: Storage, briefer: Briefer, host: str, port: int) -> ThreadingHTTPServer:
+def start_web_server(storage: Storage, briefer: Briefer, alerter: Alerter, host: str, port: int) -> ThreadingHTTPServer:
     Handler.storage = storage
     Handler.briefer = briefer
+    Handler.alerter = alerter
     server = ThreadingHTTPServer((host, port), Handler)
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True, name="web").start()

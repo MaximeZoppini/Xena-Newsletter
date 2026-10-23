@@ -58,3 +58,17 @@ def composants_regex(storage: Storage) -> Optional[re.Pattern]:
 
 def composants_texte(storage: Storage) -> str:
     return ", ".join(" / ".join(syn) for _, syn in composants(storage)) or "(aucun)"
+
+
+# Tolérance au bruit des notifications push : « exceptionnel » (méga-dingueries seulement) ou « important »
+SEUILS_PUSH = ("exceptionnel", "important")
+
+
+def seuil_push(storage: Storage) -> str:
+    value = storage.get_state("reglage:seuil_push")
+    return value if value in SEUILS_PUSH else "exceptionnel"
+
+
+def set_seuil_push(storage: Storage, value: str):
+    if value in SEUILS_PUSH:
+        storage.set_state("reglage:seuil_push", value)

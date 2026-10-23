@@ -8,6 +8,9 @@
   <meta name="theme-color" content="#f6f4ef" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#14161a" media="(prefers-color-scheme: dark)">
   <title>Xena</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" href="/static/icons/xena-192.png">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -33,6 +36,19 @@
         <option value="browser">Navigateur (gratuite)</option>
       </select>
     </label>
+    <div class="wide push-box">
+      <div class="push-head">Notifications <span class="note" id="push-state"></span></div>
+      <div class="push-row">
+        <button class="btn ghost" id="push-toggle" hidden></button>
+        <button class="btn ghost" id="push-test" hidden>Tester</button>
+        <select id="r-seuil_push" aria-label="Seuil des notifications">
+          <option value="exceptionnel">Méga-dingueries seulement</option>
+          <option value="important">Un peu plus large</option>
+        </select>
+      </div>
+      <p class="note" id="push-help" hidden></p>
+      <ul class="note push-log" id="push-log"></ul>
+    </div>
     <label class="wide">Composants de ton infra <small>un par ligne, synonymes séparés par des virgules</small>
       <textarea id="r-composants_critiques" rows="8"></textarea>
     </label>

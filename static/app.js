@@ -98,6 +98,8 @@ async function loadReglages() {
     const r = await (await api("/api/reglages")).json();
     for (const name of REGLAGES) $(`#r-${name}`).value = r[name] || "";
     $("#r-contradicteur").checked = !!r.contradicteur;
+    $("#r-seuil_push").value = r.seuil_push || "exceptionnel";
+    refreshPush();
     $("#r-status").textContent = "";
   } catch (e) { $("#r-status").textContent = "⚠ " + e.message; }
 }
@@ -105,6 +107,7 @@ async function loadReglages() {
 async function saveReglages() {
   const body = { contradicteur: $("#r-contradicteur").checked };
   for (const name of REGLAGES) body[name] = $(`#r-${name}`).value;
+  body.seuil_push = $("#r-seuil_push").value;
   try {
     await postJson("/api/reglages", body);
     $("#r-status").textContent = "✓";
@@ -289,6 +292,91 @@ async function renderFeed() {
   await Promise.all([loadMore(list, more), loadSynthese(synth)]);
   feed.replaceChildren(synth, list, more);
   if (!list.children.length && !synth.children.length) feed.replaceChildren(h("p", { class: "empty" }, "Rien pour l'instant."));
+}
+
+// ------------------------------------------------------------------ notifications push
+// iPhone / iPad : seulement depuis l'app ajoutée à l'écran d'accueil (iOS 16.4+), et après un geste.
+const push = { reg: null, sub: null, actif: false };
+const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const standalone = window.matchMedia?.("(display-mode: standalone)").matches || navigator.standalone === true;
+const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+
+async function initServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  try {
+    push.reg = await navigator.serviceWorker.register("/sw.js");
+    navigator.serviceWorker.addEventListener("message", (e) => { if (e.data?.open) location.href = e.data.open; });
+  } catch { /* pas de service worker : pas de push, le reste marche */ }
+}
+
+function b64ToBytes(b64) {
+  const s = atob((b64 + "=".repeat((4 - b64.length % 4) % 4)).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from(s, (c) => c.charCodeAt(0));
+}
+
+async function refreshPush() {
+  const state = $("#push-state"), toggle = $("#push-toggle"), test = $("#push-test"), help = $("#push-help");
+  help.hidden = true;
+  if (!pushSupported() || !push.reg) {
+    toggle.hidden = test.hidden = true;
+    state.textContent = "indisponibles ici";
+    help.hidden = false;
+    help.textContent = isIOS && !standalone
+      ? "Ajoute d'abord Xena à l'écran d'accueil (Partager → Sur l'écran d'accueil), puis ouvre-la depuis son icône."
+      : "Ce navigateur ne gère pas les notifications web.";
+    return;
+  }
+  push.sub = await push.reg.pushManager.getSubscription();
+  let actif = false, derniers = [];
+  try {
+    const r = await (await api("/api/push/status?endpoint=" + encodeURIComponent(push.sub?.endpoint || ""))).json();
+    actif = r.actif; derniers = r.derniers || [];
+  } catch { /* hors ligne */ }
+  actif = actif && Notification.permission === "granted";
+  push.actif = actif;
+  state.textContent = actif ? "actives sur cet appareil" : Notification.permission === "denied" ? "bloquées dans les réglages de l'appareil" : "désactivées";
+  toggle.hidden = Notification.permission === "denied";
+  toggle.textContent = actif ? "Désactiver" : "Activer sur cet appareil";
+  test.hidden = !actif;
+  $("#push-log").replaceChildren(...derniers.slice(0, 5).map((p) =>
+    h("li", {}, `${shortDate(p.created_at)} · ${p.titre}`, p.raison ? h("span", {}, " — " + p.raison) : null)));
+}
+
+async function togglePush() {
+  const state = $("#push-state");
+  try {
+    if (push.actif) {
+      await postJson("/api/push/unsubscribe", { endpoint: push.sub.endpoint });
+      await push.sub.unsubscribe();
+    } else {
+      if (await Notification.requestPermission() !== "granted") return refreshPush();
+      const { key } = await (await api("/api/push/key")).json();
+      const sub = push.sub || await push.reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) });
+      await postJson("/api/push/subscribe", { subscription: sub.toJSON() });
+    }
+  } catch (e) { state.textContent = "⚠ " + e.message; return; }
+  refreshPush();
+}
+
+async function testPush() {
+  try {
+    await postJson("/api/push/test", { endpoint: push.sub?.endpoint || "" });
+    $("#push-state").textContent = "notification envoyée";
+  } catch (e) { $("#push-state").textContent = "⚠ " + e.message; }
+}
+
+// Une notification ouvre /#a-<id> : la fiche s'affiche en tête du fil
+async function openFromHash() {
+  const m = location.hash.match(/^#a-([0-9a-f]{16})$/);
+  if (!m) return;
+  history.replaceState(null, "", location.pathname);
+  try {
+    const a = await (await api(`/api/articles/${m[1]}`)).json();
+    const card = renderCard(a);
+    $("#feed").prepend(card);
+    card.querySelector(".card-main").click();
+    window.scrollTo({ top: 0 });
+  } catch { /* article introuvable : on reste sur le fil */ }
 }
 
 // ------------------------------------------------------------------ synthèse 12 h
@@ -916,6 +1004,10 @@ initTabs();
 initChat();
 $("#flash-btn").addEventListener("click", playFlash);
 if (window.speechSynthesis) speechSynthesis.getVoices();
-renderFeed();
+$("#push-toggle").addEventListener("click", togglePush);
+$("#push-test").addEventListener("click", testPush);
+initServiceWorker();
+renderFeed().then(openFromHash);
+window.addEventListener("hashchange", openFromHash);
 refreshFlashCount();
 setInterval(refreshFlashCount, 5 * 60 * 1000);

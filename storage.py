@@ -206,6 +206,28 @@ class Storage:
                     synthese_id INTEGER
                 )
             """)
+            # Notifications push : un abonnement par appareil, et le journal de ce qui a été envoyé (et pourquoi)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS push_subscriptions (
+                    endpoint TEXT PRIMARY KEY,
+                    subscription_json TEXT NOT NULL,
+                    user_agent TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS push_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    article_id TEXT,
+                    dossier_id INTEGER,
+                    event_id INTEGER,
+                    titre TEXT,
+                    corps TEXT,
+                    raison TEXT,
+                    envoyes INTEGER DEFAULT 0
+                )
+            """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_dossier_articles_d ON dossier_articles(dossier_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_articles_ingested ON articles(ingested_at)")
@@ -308,7 +330,7 @@ class Storage:
     def get_article(self, article_id: str) -> Optional[Dict[str, Any]]:
         with self._get_connection() as conn:
             row = conn.execute(f"""
-                SELECT {self._LIST_COLUMNS}, b.source_text
+                SELECT {self._LIST_COLUMNS}, b.source_text, an.theme, an.fiche_json, da.event_id
                 FROM articles a
                 LEFT JOIN analyses an ON a.id = an.article_id
                 {self._LIST_JOINS}
@@ -513,6 +535,69 @@ class Storage:
                 WHERE datetime(created_at) >= datetime('now', ?)
                 ORDER BY id DESC LIMIT ?
             """, (f"-{days} days", limit)).fetchall()
+            return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------- notifications push
+    def event_articles(self, article_id: str) -> List[Dict[str, Any]]:
+        """Les articles qui racontent le même fait (même étape de dossier) ; à défaut, l'article seul."""
+        with self._get_connection() as conn:
+            rows = conn.execute(f"""
+                SELECT {self._LIST_COLUMNS}, an.theme, an.fiche_json, da.event_id
+                FROM articles a
+                JOIN analyses an ON a.id = an.article_id
+                {self._LIST_JOINS}
+                WHERE a.id = ? OR da.event_id = (SELECT event_id FROM dossier_articles WHERE article_id = ?)
+                ORDER BY an.global_score DESC
+            """, (article_id, article_id)).fetchall()
+            return [dict(r) for r in rows]
+
+    def save_subscription(self, endpoint: str, subscription_json: str, user_agent: str):
+        with self._get_connection() as conn:
+            conn.execute("""
+                INSERT INTO push_subscriptions (endpoint, subscription_json, user_agent) VALUES (?, ?, ?)
+                ON CONFLICT(endpoint) DO UPDATE SET subscription_json = excluded.subscription_json
+            """, (endpoint, subscription_json, user_agent))
+            conn.commit()
+
+    def delete_subscription(self, endpoint: str):
+        with self._get_connection() as conn:
+            conn.execute("DELETE FROM push_subscriptions WHERE endpoint = ?", (endpoint,))
+            conn.commit()
+
+    def list_subscriptions(self) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            return [dict(r) for r in conn.execute("SELECT endpoint, subscription_json FROM push_subscriptions").fetchall()]
+
+    def has_subscription(self, endpoint: str) -> bool:
+        with self._get_connection() as conn:
+            return conn.execute("SELECT 1 FROM push_subscriptions WHERE endpoint = ?", (endpoint,)).fetchone() is not None
+
+    def already_pushed(self, article_ids: List[str], event_id: Optional[int], dossier_id: Optional[int], hours: int) -> bool:
+        """Déjà notifié : un de ces articles, cette étape de dossier, ou ce dossier dans les `hours` dernières heures."""
+        with self._get_connection() as conn:
+            marks = ",".join("?" * len(article_ids)) or "''"
+            row = conn.execute(f"""
+                SELECT 1 FROM push_log
+                WHERE article_id IN ({marks})
+                   OR (? IS NOT NULL AND event_id = ?)
+                   OR (? IS NOT NULL AND dossier_id = ? AND datetime(created_at) >= datetime('now', ?))
+                LIMIT 1
+            """, (*article_ids, event_id, event_id, dossier_id, dossier_id, f"-{hours} hours")).fetchone()
+            return row is not None
+
+    def log_push(self, data: Dict[str, Any]):
+        with self._get_connection() as conn:
+            conn.execute("""
+                INSERT INTO push_log (article_id, dossier_id, event_id, titre, corps, raison, envoyes)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (data.get("article_id"), data.get("dossier_id"), data.get("event_id"), data.get("titre"),
+                  data.get("corps"), data.get("raison"), data.get("envoyes", 0)))
+            conn.commit()
+
+    def recent_pushes(self, limit: int = 20) -> List[Dict[str, Any]]:
+        with self._get_connection() as conn:
+            rows = conn.execute("SELECT created_at, article_id, titre, corps, raison, envoyes FROM push_log ORDER BY id DESC LIMIT ?",
+                                (limit,)).fetchall()
             return [dict(r) for r in rows]
 
     # ------------------------------------------------------------- état

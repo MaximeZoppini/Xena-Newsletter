@@ -79,6 +79,12 @@ a { color: inherit; }
   width: 100%; max-width: 680px; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px;
   background: var(--bg); color: var(--text); font: 14px/1.45 var(--sans); resize: vertical;
 }
+.push-box { display: flex; flex-direction: column; gap: 8px; }
+.push-head { color: var(--text); font-size: 14px; }
+.push-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.push-row .btn { min-height: 38px; padding: 6px 14px; font-weight: 500; }
+.push-row select { min-height: 38px; }
+.push-log { margin: 0; padding-left: 16px; }
 .settings .check { flex-direction: row; align-items: center; gap: 8px; }
 
 /* ---------- synthèse 12 h ---------- */

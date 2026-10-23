@@ -1,7 +1,9 @@
 import argparse
 import logging
 import time
+from typing import Optional
 
+from alertes import Alerter
 from analyzer import NewsAnalyzer
 from briefing import Briefer
 from dossiers import Threader
@@ -19,7 +21,7 @@ logger = logging.getLogger("main")
 
 
 def run_pipeline_cycle(storage: Storage, analyzer: NewsAnalyzer, briefer: Briefer, threader: Threader,
-                       dry_run: bool = False):
+                       alerter: Optional[Alerter] = None, dry_run: bool = False):
     """
     Veille continue : récupère les nouvelles publications, les fait noter par l'IA,
     et prépare la fiche de lecture complète des news importantes.
@@ -47,6 +49,11 @@ def run_pipeline_cycle(storage: Storage, analyzer: NewsAnalyzer, briefer: Briefe
         logger.info(f"📥 '{item['title'][:50]}...' -> {score}/10")
         if score >= MIN_INTEREST_SCORE:
             threader.thread(item["id"])
+            if alerter:
+                try:
+                    alerter.consider(item["id"])
+                except Exception as e:
+                    logger.error(f"Décision de push impossible : {e}", exc_info=True)
             # Fiche + version audio courte prêtes d'avance : le flash « Ce que j'ai raté » démarre sans attente
             briefer.get_or_create_brief(item["id"])
             briefer.ensure_image(item["id"])
@@ -92,6 +99,7 @@ def main():
     briefer = Briefer(storage)
     threader = Threader(storage)
     synthesizer = Synthesizer(storage)
+    alerter = Alerter(storage)
 
     if args.test_sources:
         candidates = get_all_new_candidates(storage)
@@ -120,7 +128,7 @@ def main():
         run_pipeline_cycle(storage, analyzer, briefer, threader, dry_run=args.dry_run)
         return
 
-    start_web_server(storage, briefer, host=WEB_HOST, port=WEB_PORT)
+    start_web_server(storage, briefer, alerter, host=WEB_HOST, port=WEB_PORT)
     logger.info(f"🚀 Xena active : veille toutes les {POLL_INTERVAL_SECONDS}s, site sur http://{WEB_HOST}:{WEB_PORT}")
 
     # News importantes des dernières 24 h arrivées avant les dossiers (ou pendant un redémarrage) : rangées une fois
@@ -131,7 +139,7 @@ def main():
 
     while True:
         try:
-            run_pipeline_cycle(storage, analyzer, briefer, threader)
+            run_pipeline_cycle(storage, analyzer, briefer, threader, alerter)
             synthesizer.maybe_run()
         except Exception as e:
             logger.error(f"Erreur inattendue dans la boucle : {e}", exc_info=True)
