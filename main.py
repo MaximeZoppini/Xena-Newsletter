@@ -6,6 +6,7 @@ from typing import Optional
 from alertes import Alerter
 from analyzer import NewsAnalyzer
 from briefing import Briefer
+from checklists import Checklists
 from dossiers import Threader
 from config import FEEDS, DATABASE_PATH, MIN_INTEREST_SCORE, POLL_INTERVAL_SECONDS, WEB_HOST, WEB_PORT
 from sources import get_all_new_candidates
@@ -100,6 +101,7 @@ def main():
     threader = Threader(storage)
     synthesizer = Synthesizer(storage)
     alerter = Alerter(storage)
+    checklists = Checklists(storage)
 
     if args.test_sources:
         candidates = get_all_new_candidates(storage)
@@ -151,6 +153,10 @@ def main():
             synthesizer.maybe_run()
         except Exception as e:
             logger.error(f"Erreur inattendue dans la boucle : {e}", exc_info=True)
+        try:
+            checklists.scan()
+        except Exception as e:
+            logger.error(f"Lecture des checklists : {e}", exc_info=True)
         time.sleep(POLL_INTERVAL_SECONDS)
 
 

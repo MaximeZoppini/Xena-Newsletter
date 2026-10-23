@@ -283,6 +283,7 @@ function initTabs() {
 }
 
 async function renderFeed() {
+  if (filtre === "taches") return renderTaches();
   const feed = $("#feed");
   feed.replaceChildren(h("div", { class: "loading" }, "Chargement…"));
   feedState = { offset: 0, lastDay: null, dossiers: new Set() };
@@ -377,6 +378,96 @@ async function openFromHash() {
     card.querySelector(".card-main").click();
     window.scrollTo({ top: 0 });
   } catch { /* article introuvable : on reste sur le fil */ }
+}
+
+// ------------------------------------------------------------------ checklists
+// Les tâches viennent des fichiers Markdown des dossiers surveillés (agenda/, idees/) ou sont ajoutées ici.
+// D'abord ce qui a une échéance, par date ; puis le reste par dossier et par fichier ; les faites repliées en bas.
+const SOURCES = { agenda: "Agenda", idees: "Idées", perso: "Perso" };
+const todayISO = () => new Date().toLocaleDateString("sv-SE"); // AAAA-MM-JJ local
+
+function updateTachesCount(taches) {
+  const n = taches.filter((t) => !t.fait && t.echeance && t.echeance <= todayISO()).length; // dues aujourd'hui ou en retard
+  $("#taches-count").textContent = n || "";
+}
+
+async function refreshTachesCount() {
+  try { updateTachesCount((await (await api("/api/taches")).json()).taches); } catch { /* hors ligne */ }
+}
+
+async function renderTaches() {
+  const feed = $("#feed");
+  let taches = [];
+  try { taches = (await (await api("/api/taches")).json()).taches; } catch (e) {
+    feed.replaceChildren(h("p", { class: "empty" }, "Erreur : " + e.message)); return;
+  }
+  updateTachesCount(taches);
+  const input = h("input", { type: "text", placeholder: "Ajouter une tâche…", enterkeyhint: "done" });
+  const form = h("form", { class: "task-add", onsubmit: async (e) => {
+    e.preventDefault();
+    const texte = input.value.trim();
+    if (!texte) return;
+    input.value = "";
+    try { await postJson("/api/taches", { texte }); } catch (err) { alert("⚠ " + err.message); }
+    renderTaches();
+  } }, input);
+
+  const todo = taches.filter((t) => !t.fait), done = taches.filter((t) => t.fait);
+  const dated = todo.filter((t) => t.echeance).sort((a, b) => (a.echeance + (a.heure || "")).localeCompare(b.echeance + (b.heure || "")));
+  const parts = [form];
+  if (dated.length) {
+    parts.push(h("div", { class: "day" }, "Échéances"));
+    let last = null;
+    for (const t of dated) {
+      const label = t.echeance < todayISO() ? "En retard" : dayLabel(new Date(t.echeance + "T00:00"));
+      if (label !== last) { parts.push(h("div", { class: "task-day" + (label === "En retard" ? " late" : "") }, label)); last = label; }
+      parts.push(renderTache(t));
+    }
+  }
+  const bySource = new Map();
+  for (const t of todo.filter((t) => !t.echeance)) {
+    if (!bySource.has(t.source)) bySource.set(t.source, []);
+    bySource.get(t.source).push(t);
+  }
+  for (const [source, list] of bySource) {
+    parts.push(h("div", { class: "day" }, SOURCES[source] || source));
+    let last = null;
+    for (const t of list) {
+      const where = [t.fichier ? t.fichier.split("/").slice(1).join("/").replace(/\.md$/i, "") : "", t.groupe || ""].filter(Boolean).join(" · ");
+      if (where && where !== last) { parts.push(h("div", { class: "task-day" }, where)); last = where; }
+      parts.push(renderTache(t));
+    }
+  }
+  if (!todo.length) parts.push(h("p", { class: "empty" }, taches.length ? "Tout est fait." : "Aucune tâche pour l'instant."));
+  if (done.length) {
+    done.sort((a, b) => (b.fait_at || "").localeCompare(a.fait_at || ""));
+    parts.push(h("details", { class: "task-done" }, h("summary", {}, `Faites (${done.length})`), done.slice(0, 50).map(renderTache)));
+  }
+  feed.replaceChildren(...parts);
+}
+
+// La date et l'heure, déjà rangées en échéance, sont retirées du texte affiché
+function tacheTexte(t) {
+  let s = t.texte;
+  if (t.echeance) s = s.replace(/\s*(📅|⏳|🗓️?)?\s*\b20\d\d-[01]\d-[0-3]\d\b/, "");
+  if (t.heure) s = s.replace(/\s*(à\s+)?\b([01]?\d|2[0-3])[:h][0-5]\d\b/, "");
+  return s.trim() || t.texte;
+}
+
+function renderTache(t) {
+  const meta = [t.heure, t.echeance && t.fait ? t.echeance : ""].filter(Boolean).join(" · ");
+  return h("label", { class: "task" + (t.fait ? " done" : "") },
+    h("input", { type: "checkbox", checked: !!t.fait, onchange: async (e) => {
+      try { await postJson(`/api/taches/${t.id}`, { fait: e.target.checked }); } catch (err) { alert("⚠ " + err.message); }
+      renderTaches();
+    } }),
+    h("span", { class: "task-text" }, tacheTexte(t), meta ? h("span", { class: "task-meta" }, meta) : null),
+    t.source === "perso" ? h("button", { class: "ibtn task-del", "aria-label": "Supprimer", onclick: async (e) => {
+      e.preventDefault();
+      await postJson(`/api/taches/${t.id}`, { supprimer: true }).catch(() => {});
+      renderTaches();
+    } }, "✕") : null,
+  );
 }
 
 // ------------------------------------------------------------------ synthèse 12 h
@@ -496,8 +587,8 @@ function statutMark(statut) {
   return null;
 }
 
-// Grande image en tête de carte, comme un tweet. Wikipédia : un logo (png, svg) est montré en entier,
-// un portrait est cadré sur le haut (le visage).
+// Vignette carrée à droite du titre. Wikipédia : un logo (png, svg) est montré en entier,
+// un portrait est cadré sur le visage.
 function media(url, onclick) {
   if (!url) return null;
   const wiki = /wikimedia\.org|wikipedia\.org/.test(url);
@@ -516,9 +607,9 @@ function renderCard(a) {
   const imp = importance(a.score ?? 0);
   const open = () => toggleDetails(a, details);
   return h("article", { class: "card" + (a.seen ? " seen" : "") + (a.image ? " has-media" : ""), "data-card": a.id },
-    media(a.image, open),
     h("div", { class: "card-main", onclick: (e) => { if (!e.target.closest("button")) open(); } },
       h("h2", {}, h("span", { class: `imp ${imp.cls}`, title: imp.label }), statutMark(a.statut), a.titre),
+      media(a.image),
     ),
     h("div", { class: "card-actions" },
       h("button", { class: "ibtn", "aria-label": "Lire la fiche", onclick: () => toggleDetails(a, details) }, "📝"),
@@ -539,12 +630,12 @@ function renderDossierCard(a) {
   const open = () => toggleDossier(d, details);
   const image = d.image || a.image;
   return h("article", { class: "card dossier" + (d.unseen ? "" : " seen") + (image ? " has-media" : ""), "data-dossier": d.id },
-    media(image, open),
     h("div", { class: "card-main", onclick: (e) => { if (!e.target.closest("button")) open(); } },
       h("div", { class: "card-text" },
         h("h2", {}, h("span", { class: `imp ${imp.cls}`, title: imp.label }), d.titre),
         h("p", { class: "etat" }, statutMark(d.statut), d.etat),
       ),
+      media(image),
     ),
     h("div", { class: "card-actions" },
       h("button", { class: "ibtn", "aria-label": "Suivre le fil", onclick: open }, "🧵",
@@ -1027,4 +1118,5 @@ initServiceWorker();
 renderFeed().then(openFromHash);
 window.addEventListener("hashchange", openFromHash);
 refreshFlashCount();
-setInterval(refreshFlashCount, 5 * 60 * 1000);
+refreshTachesCount();
+setInterval(() => { refreshFlashCount(); refreshTachesCount(); }, 5 * 60 * 1000);
