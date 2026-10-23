@@ -44,7 +44,7 @@ WEB_PORT = int(os.getenv("WEB_PORT", "8080"))
 # La notation (analyzer.py) écarte ensuite tout ce qui sort de ces thèmes.
 # level : 1 source primaire (annonce officielle, publication, agence d'État), 2 chercheur ou firme reconnue,
 # 3 presse sérieuse, 4 réseau social. C'est le point de départ de la confiance, pas la loi.
-# watchlist_only : ne garder que les entrées qui citent un composant critique (réglages) ; max_items : entrées lues par passage.
+# watchlist_only : ne garder que les entrées qui citent un composant de l'infra (réglages) ou un langage répandu ; max_items : entrées lues par passage.
 def _feed(name, url, category, known_bias, level=3, watchlist_only=False, max_items=2):
     return {"name": name, "url": url, "category": category, "known_bias": known_bias,
             "level": level, "watchlist_only": watchlist_only, "max_items": max_items}
@@ -81,6 +81,11 @@ FEEDS = [
     _feed("CNBC", "https://www.cnbc.com/id/100003114/device/rss/rss.html", "business", "Chaîne économique américaine, marchés et entreprises"),
     _feed("TechCrunch", "https://techcrunch.com/feed/", "business", "Média tech américain axé startups, financements et industrie"),
 ]
+
+# Langages et runtimes répandus : leurs failles passent le filtre des flux de sécurité même hors de l'infra ;
+# l'analyse ne retient ensuite que les failles majeures et avérées.
+LANGAGES = ["Golang", "Rust", "Ruby", ".NET", "JavaScript", "TypeScript", "Perl", "Kotlin", "Swift",
+            "glibc", "LLVM", "GCC", "V8", "WebAssembly"]
 
 # Catalogue CISA des vulnérabilités exploitées (KEV) : filtré sur les composants critiques
 CISA_KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"

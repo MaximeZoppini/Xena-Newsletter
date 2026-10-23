@@ -51,7 +51,7 @@ Si un cluster ne contient que des sources de niveau 4, le marquer `non_sourcé` 
 
 Trois scores de 0 à 1, chacun justifié en une phrase :
 
-- `impact` : effet sur Maxime, ses systèmes, son employeur, ses projets. Un composant de sa watchlist touché = impact élevé par défaut.
+- `impact` : effet sur Maxime, ses systèmes, ses projets. Un composant de sa watchlist touché = impact élevé par défaut.
 - `fenetre_action` : dans combien de temps doit-il agir, s'il le doit. Heures = 1, jours = 0,5, jamais = 0.
 - `confiance` : héritée des fiches, pondérée par la corroboration.
 

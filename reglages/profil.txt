@@ -1,3 +1,3 @@
 # Qui est le lecteur : sert à juger l'impact d'un événement sur lui. Modifiable depuis les réglages du site.
-Maxime travaille chez Energy Pool. Il fait tourner sa propre infrastructure (Proxmox, conteneurs LXC, Docker, n8n), développe avec les API d'IA (Gemini, Anthropic, OpenAI) et l'API de Bybit, et héberge Xena chez lui.
+Maxime fait tourner sa propre infrastructure (Proxmox, conteneurs LXC, Docker, n8n), développe avec les API d'IA (Gemini, Anthropic, OpenAI) et l'API de Bybit, et héberge Xena chez lui.
 Il suit la géopolitique de premier plan, les ruptures technologiques et le business majeur.

@@ -1,5 +1,5 @@
-# Un composant par ligne ; synonymes séparés par des virgules.
-# Une faille sur un de ces composants est prioritaire. Modifiable depuis les réglages du site.
+# Ce qui tourne sur ton infra : toute faille sérieuse sur ces composants te sera signalée.
+# Un composant par ligne ; synonymes séparés par des virgules. Modifiable depuis les réglages du site.
 PHP
 Node.js, n8n
 Python, pip, certifi

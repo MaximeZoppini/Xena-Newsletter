@@ -65,7 +65,7 @@ QUI EST MAXIME :
 SES COMPOSANTS CRITIQUES : {{composants}}
 
 Pour chaque cluster numéroté, donne trois jugements, chacun justifié en une phrase :
-- "impact" de 0 à 1 : effet sur Maxime, ses systèmes, son employeur, ses projets, ou sur le monde qu'il suit de près.
+- "impact" de 0 à 1 : effet sur Maxime, ses systèmes, ses projets, ou sur le monde qu'il suit de près.
   Un composant critique touché = impact élevé par défaut (≥ 0,7).
 - "fenetre_action" : 1 s'il doit agir dans les heures qui viennent, 0.5 dans les jours, 0 s'il n'a jamais à agir.
 - "que_ferait_maxime" : une ligne, ce que Maxime ferait différemment en sachant ça (« rien » si rien).

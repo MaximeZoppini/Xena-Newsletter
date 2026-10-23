@@ -56,4 +56,4 @@ Aucune valeur numérique n'est écrite en dur. Les budgets, cadences, réputatio
 Maxime ne règle que **deux curseurs** :
 
 1. **Seuil de tolérance au bruit.**
-2. **Liste des composants critiques.** Point de départ : PHP, Node.js/n8n, Python/pip/certifi, Java/OpenJDK, Docker, Proxmox, Linux (Debian/Ubuntu), OpenSSL, nginx, PostgreSQL, Cloudflare, AWS, Bybit API, Gemini/Anthropic/OpenAI API, GitLab, et les composants déployés chez Energy Pool (liste à fournir).
+2. **Liste des composants critiques.** Point de départ : PHP, Node.js/n8n, Python/pip/certifi, Java/OpenJDK, Docker, Proxmox, Linux (Debian/Ubuntu), OpenSSL, nginx, PostgreSQL, Cloudflare, AWS, Bybit API, Gemini/Anthropic/OpenAI API, GitLab : ce qui tourne sur son infra. S'y ajoute toute faille majeure et avérée sur un langage ou un runtime répandu, même hors liste.

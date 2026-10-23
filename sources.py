@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 from typing import List, Dict, Any, Optional
 import logging
 import reglages
-from config import CISA_KEV_URL, FEEDS, HACKER_NEWS_TOP_URL, HACKER_NEWS_ITEM_URL
+from config import CISA_KEV_URL, FEEDS, LANGAGES, HACKER_NEWS_TOP_URL, HACKER_NEWS_ITEM_URL
 from storage import Storage
 
 logging.basicConfig(level=logging.INFO)
@@ -27,6 +27,14 @@ REJECT_KEYWORDS = [
     r"\bguide d'achat\b", r"\bbon plan\b", r"\bpromo\b"
 ]
 REJECT_REGEX = re.compile("|".join(REJECT_KEYWORDS), re.IGNORECASE)
+
+LANGAGES_REGEX = re.compile(r"(?<![\w.])(" + "|".join(re.escape(l) for l in LANGAGES) + r")(?![\w])", re.IGNORECASE)
+
+
+def securite_pertinente(text: str, watchlist: Optional[re.Pattern]) -> bool:
+    """Un composant de l'infra, ou un langage répandu (l'analyse jugera si la faille est majeure et avérée)."""
+    return bool((watchlist and watchlist.search(text)) or LANGAGES_REGEX.search(text))
+
 
 def should_skip_title(title: str) -> bool:
     return bool(REJECT_REGEX.search(title))
@@ -83,7 +91,7 @@ def fetch_rss_feeds(watchlist: Optional[re.Pattern] = None) -> List[Dict[str, An
                                 break
                     raw_summary = entry.get("summary") or entry.get("description", "")
                     summary = clean_html(raw_summary)
-                    if feed_info["watchlist_only"] and not (watchlist and watchlist.search(f"{title} {summary}")):
+                    if feed_info["watchlist_only"] and not securite_pertinente(f"{title} {summary}", watchlist):
                         continue
                     pub_date = entry.get("published", "") or entry.get("updated", "")
                     
@@ -136,9 +144,7 @@ def fetch_hacker_news() -> List[Dict[str, Any]]:
     return items
 
 def fetch_cisa_kev(watchlist: Optional[re.Pattern]) -> List[Dict[str, Any]]:
-    """Entrées récentes du catalogue CISA KEV (failles exploitées) qui touchent un composant critique."""
-    if not watchlist:
-        return []
+    """Entrées récentes du catalogue CISA KEV (failles exploitées) qui touchent l'infra ou un langage répandu."""
     req_headers = dict(HEADERS)
     cached = FEED_CACHE.get(CISA_KEV_URL, {})
     if cached.get("etag"):
@@ -156,7 +162,7 @@ def fetch_cisa_kev(watchlist: Optional[re.Pattern]) -> List[Dict[str, Any]]:
         vulns = [v for v in resp.json().get("vulnerabilities", []) if v.get("dateAdded", "") >= since]
         for v in vulns:
             text = f"{v.get('vendorProject', '')} {v.get('product', '')} {v.get('vulnerabilityName', '')}"
-            if not watchlist.search(text):
+            if not securite_pertinente(text, watchlist):
                 continue
             title = f"CISA KEV : {v.get('cveID')} — {v.get('vulnerabilityName', '')}"
             url = f"https://nvd.nist.gov/vuln/detail/{v.get('cveID')}"
