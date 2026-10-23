@@ -57,6 +57,7 @@ def _article_card(row: dict) -> dict:
             "statut": row.get("dossier_statut") or "",
             "n": row.get("dossier_n") or 0,
             "unseen": row.get("dossier_unseen") or 0,
+            "image": row.get("dossier_image") or "",
         } if row.get("dossier_id") is not None else None,
     }
 

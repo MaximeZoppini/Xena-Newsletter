@@ -496,14 +496,29 @@ function statutMark(statut) {
   return null;
 }
 
+// Grande image en tête de carte, comme un tweet. Wikipédia : un logo (png, svg) est montré en entier,
+// un portrait est cadré sur le haut (le visage).
+function media(url, onclick) {
+  if (!url) return null;
+  const wiki = /wikimedia\.org|wikipedia\.org/.test(url);
+  const logo = wiki && /\.(svg|png)(\?|$)/i.test(url);
+  return h("div", { class: "media" + (logo ? " contain" : wiki ? " portrait" : ""), onclick },
+    h("img", { src: url, alt: "", loading: "lazy", referrerpolicy: "no-referrer",
+      onerror: (e) => {
+        const box = e.target.parentElement;
+        box.closest(".card")?.classList.remove("has-media");
+        box.remove();
+      } }));
+}
+
 function renderCard(a) {
   const details = h("div", { class: "details", hidden: true });
   const imp = importance(a.score ?? 0);
-  return h("article", { class: "card" + (a.seen ? " seen" : ""), "data-card": a.id },
-    h("div", { class: "card-main", onclick: (e) => { if (!e.target.closest("button")) toggleDetails(a, details); } },
+  const open = () => toggleDetails(a, details);
+  return h("article", { class: "card" + (a.seen ? " seen" : "") + (a.image ? " has-media" : ""), "data-card": a.id },
+    media(a.image, open),
+    h("div", { class: "card-main", onclick: (e) => { if (!e.target.closest("button")) open(); } },
       h("h2", {}, h("span", { class: `imp ${imp.cls}`, title: imp.label }), statutMark(a.statut), a.titre),
-      a.image ? h("img", { class: "thumb", src: a.image, alt: "", loading: "lazy", referrerpolicy: "no-referrer",
-        onerror: (e) => e.target.remove() }) : null,
     ),
     h("div", { class: "card-actions" },
       h("button", { class: "ibtn", "aria-label": "Lire la fiche", onclick: () => toggleDetails(a, details) }, "📝"),
@@ -522,7 +537,9 @@ function renderDossierCard(a) {
   const details = h("div", { class: "details", hidden: true });
   const imp = importance(a.score ?? 0);
   const open = () => toggleDossier(d, details);
-  return h("article", { class: "card dossier" + (d.unseen ? "" : " seen"), "data-dossier": d.id },
+  const image = d.image || a.image;
+  return h("article", { class: "card dossier" + (d.unseen ? "" : " seen") + (image ? " has-media" : ""), "data-dossier": d.id },
+    media(image, open),
     h("div", { class: "card-main", onclick: (e) => { if (!e.target.closest("button")) open(); } },
       h("div", { class: "card-text" },
         h("h2", {}, h("span", { class: `imp ${imp.cls}`, title: imp.label }), d.titre),

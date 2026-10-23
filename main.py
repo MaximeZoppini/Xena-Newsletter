@@ -131,6 +131,14 @@ def main():
     start_web_server(storage, briefer, alerter, host=WEB_HOST, port=WEB_PORT)
     logger.info(f"🚀 Xena active : veille toutes les {POLL_INTERVAL_SECONDS}s, site sur http://{WEB_HOST}:{WEB_PORT}")
 
+    # Images manquantes des news importantes des dernières 24 h
+    try:
+        for r in storage.list_recent(min_score=MIN_INTEREST_SCORE, hours=24, limit=200):
+            if not r.get("image_url") and not r.get("image_checked"):
+                briefer.ensure_image(r["id"])
+    except Exception as e:
+        logger.error(f"Rattrapage des images : {e}", exc_info=True)
+
     # News importantes des dernières 24 h arrivées avant les dossiers (ou pendant un redémarrage) : rangées une fois
     try:
         threader.catch_up(hours=24)

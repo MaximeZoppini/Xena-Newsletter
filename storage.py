@@ -101,10 +101,11 @@ class Storage:
                 conn.execute("ALTER TABLE analyses ADD COLUMN target_domain TEXT")
             except sqlite3.OperationalError:
                 pass
-            try:
-                conn.execute("ALTER TABLE articles ADD COLUMN image_url TEXT")
-            except sqlite3.OperationalError:
-                pass
+            for col in ("image_url TEXT", "image_checked INTEGER DEFAULT 0"):
+                try:
+                    conn.execute(f"ALTER TABLE articles ADD COLUMN {col}")
+                except sqlite3.OperationalError:
+                    pass
             for col in ("chosen_style", "titre_fr", "chapo_fr", "statut", "confiance", "theme", "fiche_json"):
                 try:
                     conn.execute(f"ALTER TABLE analyses ADD COLUMN {col} TEXT")
@@ -305,7 +306,11 @@ class Storage:
         (SELECT COUNT(*) FROM dossier_articles x LEFT JOIN seen sx ON sx.article_id = x.article_id
           WHERE x.dossier_id = da.dossier_id AND sx.article_id IS NULL) AS dossier_unseen,
         (SELECT e.phrase FROM dossier_events e WHERE e.dossier_id = da.dossier_id ORDER BY e.id DESC LIMIT 1) AS dossier_etat,
-        (SELECT e.statut FROM dossier_events e WHERE e.dossier_id = da.dossier_id ORDER BY e.id DESC LIMIT 1) AS dossier_statut
+        (SELECT e.statut FROM dossier_events e WHERE e.dossier_id = da.dossier_id ORDER BY e.id DESC LIMIT 1) AS dossier_statut,
+        (SELECT x2.image_url FROM dossier_articles x JOIN articles x2 ON x2.id = x.article_id
+          WHERE x.dossier_id = da.dossier_id AND COALESCE(x2.image_url, '') != ''
+          ORDER BY x2.ingested_at DESC LIMIT 1) AS dossier_image,
+        a.image_checked
     """
     _LIST_JOINS = """
         LEFT JOIN briefs b ON a.id = b.article_id
@@ -360,6 +365,11 @@ class Storage:
         with self._get_connection() as conn:
             conn.execute("UPDATE articles SET image_url = ? WHERE id = ? AND COALESCE(image_url, '') = ''",
                          (image_url, article_id))
+            conn.commit()
+
+    def mark_image_checked(self, article_id: str):
+        with self._get_connection() as conn:
+            conn.execute("UPDATE articles SET image_checked = 1 WHERE id = ?", (article_id,))
             conn.commit()
 
     def mark_seen(self, article_ids: List[str]):

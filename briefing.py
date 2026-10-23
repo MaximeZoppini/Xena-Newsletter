@@ -137,6 +137,34 @@ def fetch_article_page(url: str) -> Tuple[str, str]:
         return "", ""
 
 
+def wikipedia_image(names: List[str]) -> str:
+    """Photo ou logo Wikipédia (fr puis en) de la première entité qui en a une. Gratuit, sans clé."""
+    from urllib.parse import quote
+    for name in names[:4]:
+        name = re.sub(r"\s+v?\d[\w.\-]*$", "", (name or "").strip())  # « OpenSSL 3.2 » -> « OpenSSL »
+        if len(name) < 2 or re.match(r"^(CVE|GHSA)-", name, re.I):
+            continue
+        for lang in ("fr", "en"):
+            try:
+                resp = requests.get(f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{quote(name.replace(' ', '_'))}",
+                                    headers=HEADERS, timeout=5)
+                if resp.status_code != 200:
+                    continue
+                page = resp.json()
+                if page.get("type") == "disambiguation":
+                    continue
+                orig, thumb = page.get("originalimage") or {}, page.get("thumbnail") or {}
+                if not orig.get("source") or orig.get("width", 0) < 200:
+                    continue
+                # Assez grand pour une carte sans télécharger un original de plusieurs Mo (960 px : taille standard de Wikimedia)
+                if orig.get("width", 0) > 960 and re.search(r"/\d+px-", thumb.get("source", "")):
+                    return re.sub(r"/\d+px-", "/960px-", thumb["source"])
+                return orig["source"]
+            except Exception as e:
+                logger.debug(f"Image Wikipédia introuvable pour {name} : {e}")
+    return ""
+
+
 class Briefer:
     def __init__(self, storage: Storage):
         self.storage = storage
@@ -249,12 +277,23 @@ VERSION DE LA PARTIE MISE EN CAUSE (analyse préalable) : {art.get('counter_view
             return audio
 
     def ensure_image(self, article_id: str):
-        """Image d'aperçu pour le fil, si le flux n'en fournissait pas."""
+        """Image pour le fil : celle de l'article (flux, puis page) ; à défaut, la photo Wikipédia
+        du principal acteur ou produit cité. Cherchée une seule fois par article."""
         art = self.storage.get_article(article_id)
-        if art and not art.get("image_url") and art["url"].startswith("http"):
+        if not art or art.get("image_url") or art.get("image_checked"):
+            return
+        image = ""
+        # La fiche a déjà lu la page : si elle n'a pas trouvé d'image, inutile de la relire
+        if art["url"].startswith("http") and not art.get("brief_json"):
             _, image = fetch_article_page(art["url"])
-            if image:
-                self.storage.set_image(article_id, image)
+        if not image:
+            entites = []
+            if art.get("fiche_json"):
+                entites = json.loads(art["fiche_json"]).get("entites") or []
+            image = wikipedia_image(entites)
+        if image:
+            self.storage.set_image(article_id, image)
+        self.storage.mark_image_checked(article_id)
 
     def get_or_create_short_audio(self, article_id: str) -> Optional[bytes]:
         """Version courte lue dans le flash « Ce que j'ai raté » : l'essentiel en 1-2 phrases, rien d'autre."""

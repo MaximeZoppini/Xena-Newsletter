@@ -126,7 +126,15 @@ a { color: inherit; }
   font-family: var(--serif); font-size: 17px; font-weight: 600; line-height: 1.32; margin: 2px 0 0;
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
-.thumb { width: 68px; height: 68px; border-radius: 10px; object-fit: cover; flex: none; background: var(--line); }
+.media {
+  margin: -10px -10px 10px -14px; aspect-ratio: 16 / 9; overflow: hidden; cursor: pointer;
+  border-radius: 13px 13px 0 0; background: var(--line);
+}
+.media img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.media.contain { background: #fff; }
+.media.contain img { object-fit: contain; padding: 14px; }
+.media.portrait img { object-position: center 20%; }
+.card.has-media h2 { font-size: 18px; }
 .card-text { flex: 1; min-width: 0; }
 .etat { margin: 4px 0 2px; font-size: 15px; color: var(--muted); }
 .st { display: inline-block; font-weight: 700; font-size: 13px; margin-right: 6px; color: var(--muted); }
