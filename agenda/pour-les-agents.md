@@ -1,5 +1,7 @@
 # À demander aux agents (messages prêts à coller)
 
+> **Archivé le 24/10** : importé dans la to-do Xena (`xena-todo`). Ne plus modifier ce fichier.
+
 ## Infra
 - [ ] « Prépare-moi les ACLs Tailscale adaptées à mes vrais services, prêtes à coller. » (ajouté le 23/10)
 

@@ -1,5 +1,7 @@
 # À faire — Maxime (toi seul peux le faire)
 
+> **Archivé le 24/10** : importé dans la to-do Xena (`xena-todo`). Ne plus modifier ce fichier.
+
 ## Cette semaine
 - [ ] Console Cloudflare : vérifier les « Public hostnames » du tunnel du portfolio (pas l'interface Coolify) — Infra — semaine (ajouté le 23/10)
 - [ ] Activer la 2FA : Google (identité Tailscale), Cloudflare, GitHub, registrar loopwork.fr — Infra — semaine (ajouté le 23/10)
