@@ -16,6 +16,8 @@ Format :
     "echeance": "2026-10-26",       AAAA-MM-JJ ou null
     "heure": "10:30",               HH:MM ou null
     "groupe": "Administratif",      libre ou null
+    "projet": "Infra",              libre ou null : le site classe les tâches par projet
+    "urgence": "semaine",           "aujourd'hui", "semaine", "un jour" ou null
     "source": "agenda",             qui l'a créée : "agenda" ou "maxime"
     "fait": false,
     "fait_par": null,               "agenda" ou "maxime" quand elle est faite
@@ -45,6 +47,7 @@ AUTEURS = ("agenda", "maxime")
 DATE_RE = re.compile(r"^20\d\d-[01]\d-[0-3]\d$")
 HEURE_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 MAX_TEXTE = 300
+URGENCES = ("aujourd'hui", "semaine", "un jour")
 
 
 class TodoError(Exception):
@@ -139,6 +142,20 @@ def _check_heure(value: Optional[str]) -> Optional[str]:
     return value
 
 
+def _check_urgence(value: Optional[str]) -> Optional[str]:
+    if value in (None, ""):
+        return None
+    norm = " ".join(value.strip().lower().replace("’", "'").replace("-", " ").split())
+    norm = {"aujourdhui": "aujourd'hui", "unjour": "un jour"}.get(norm.replace(" ", "").replace("'", ""), norm)
+    if norm not in URGENCES:
+        raise TodoError(f"urgence invalide « {value} » : aujourd'hui, semaine ou un jour")
+    return norm
+
+
+def _court(value: Optional[str]) -> Optional[str]:
+    return (value or "").strip()[:80] or None
+
+
 def _check_texte(value: str) -> str:
     value = " ".join((value or "").split())
     if not value:
@@ -163,14 +180,14 @@ def lister(backup: bool = False) -> List[Dict[str, Any]]:
 
 
 def ajouter(texte: str, par: str, echeance: Optional[str] = None, heure: Optional[str] = None,
-            groupe: Optional[str] = None) -> Dict[str, Any]:
+            groupe: Optional[str] = None, projet: Optional[str] = None, urgence: Optional[str] = None) -> Dict[str, Any]:
     if par not in AUTEURS:
         raise TodoError(f"auteur inconnu : {par}")
     now = _now()
     tache = {
         "id": uuid.uuid4().hex[:12], "texte": _check_texte(texte),
         "echeance": _check_date(echeance), "heure": _check_heure(heure),
-        "groupe": (groupe or "").strip()[:80] or None, "source": par,
+        "groupe": _court(groupe), "projet": _court(projet), "urgence": _check_urgence(urgence), "source": par,
         "fait": False, "fait_par": None, "fait_le": None, "cree_le": now, "modifie_le": now,
     }
     with _locked(exclusive=True):
@@ -194,8 +211,9 @@ def cocher(task_id: str, par: str, fait: bool = True) -> Dict[str, Any]:
 
 
 def modifier(task_id: str, texte: Optional[str] = None, echeance: Optional[str] = None,
-             heure: Optional[str] = None, groupe: Optional[str] = None) -> Dict[str, Any]:
-    """None = inchangé ; chaîne vide = effacer (échéance, heure, groupe)."""
+             heure: Optional[str] = None, groupe: Optional[str] = None, projet: Optional[str] = None,
+             urgence: Optional[str] = None) -> Dict[str, Any]:
+    """None = inchangé ; chaîne vide = effacer (échéance, heure, groupe, projet, urgence)."""
     with _locked(exclusive=True):
         data = _read()
         t = _find(data, task_id)
@@ -206,7 +224,11 @@ def modifier(task_id: str, texte: Optional[str] = None, echeance: Optional[str] 
         if heure is not None:
             t["heure"] = _check_heure(heure)
         if groupe is not None:
-            t["groupe"] = groupe.strip()[:80] or None
+            t["groupe"] = _court(groupe)
+        if projet is not None:
+            t["projet"] = _court(projet)
+        if urgence is not None:
+            t["urgence"] = _check_urgence(urgence)
         t["modifie_le"] = _now()
         _write(data)
     return t

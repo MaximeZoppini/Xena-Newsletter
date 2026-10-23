@@ -382,12 +382,15 @@ async function openFromHash() {
 
 // ------------------------------------------------------------------ checklists
 // Les tâches vivent dans data/todo.json : l'agent Agenda les ajoute et les coche par xena-todo, Maxime ici.
-// D'abord ce qui a une échéance, par date ; puis le reste par groupe ; les faites repliées en bas.
+// D'abord ce qui a une échéance, par date ; puis le reste par projet, trié par urgence ; les faites repliées en bas.
 const SOURCES = { agenda: "Agenda", maxime: "Ajoutées ici" };
+const URGENCE_RANG = { "aujourd'hui": 0, semaine: 1, "un jour": 2 };
+const rang = (t) => URGENCE_RANG[t.urgence] ?? 3;
 const todayISO = () => new Date().toLocaleDateString("sv-SE"); // AAAA-MM-JJ local
 
 function updateTachesCount(taches) {
-  const n = taches.filter((t) => !t.fait && t.echeance && t.echeance <= todayISO()).length; // dues aujourd'hui ou en retard
+  // À faire aujourd'hui : échéance passée ou du jour, ou urgence « aujourd'hui »
+  const n = taches.filter((t) => !t.fait && ((t.echeance && t.echeance <= todayISO()) || t.urgence === "aujourd'hui")).length;
   $("#taches-count").textContent = n || "";
 }
 
@@ -424,14 +427,17 @@ async function renderTaches() {
       parts.push(renderTache(t));
     }
   }
-  const byGroupe = new Map();
+  const byProjet = new Map();
   for (const t of todo.filter((t) => !t.echeance)) {
-    const g = t.groupe || SOURCES[t.source] || t.source;
-    if (!byGroupe.has(g)) byGroupe.set(g, []);
-    byGroupe.get(g).push(t);
+    const p = t.projet || t.groupe || SOURCES[t.source] || t.source;
+    if (!byProjet.has(p)) byProjet.set(p, []);
+    byProjet.get(p).push(t);
   }
-  for (const [groupe, list] of byGroupe) {
-    parts.push(h("div", { class: "day" }, groupe));
+  // Les projets qui ont de l'urgent d'abord, puis par nom
+  const projets = [...byProjet.entries()].map(([p, list]) => [p, list.sort((a, b) => rang(a) - rang(b) || (a.cree_le || "").localeCompare(b.cree_le || ""))]);
+  projets.sort((a, b) => rang(a[1][0]) - rang(b[1][0]) || a[0].localeCompare(b[0], "fr"));
+  for (const [projet, list] of projets) {
+    parts.push(h("div", { class: "day" }, projet));
     parts.push(...list.map(renderTache));
   }
   if (!todo.length) parts.push(h("p", { class: "empty" }, taches.length ? "Tout est fait." : "Aucune tâche pour l'instant."));
@@ -451,9 +457,11 @@ function tacheTexte(t) {
 }
 
 function renderTache(t) {
+  // Sous une échéance, on rappelle le projet ; dans un projet, l'urgence
   const meta = [t.heure, t.echeance && t.fait ? t.echeance : "", t.fait && t.fait_par === "agenda" ? "cochée par Agenda" : "",
-    t.echeance && t.groupe ? t.groupe : ""].filter(Boolean).join(" · ");
-  return h("label", { class: "task" + (t.fait ? " done" : "") },
+    t.echeance ? t.projet || t.groupe : t.projet && t.groupe ? t.groupe : "",
+    !t.echeance && !t.fait && t.urgence ? t.urgence : ""].filter(Boolean).join(" · ");
+  return h("label", { class: "task" + (t.fait ? " done" : "") + (!t.fait && t.urgence === "aujourd'hui" ? " urgent" : "") },
     h("input", { type: "checkbox", checked: !!t.fait, onchange: async (e) => {
       try { await postJson(`/api/taches/${t.id}`, { fait: e.target.checked }); } catch (err) { alert("⚠ " + err.message); }
       renderTaches();

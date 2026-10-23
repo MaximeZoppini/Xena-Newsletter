@@ -40,17 +40,18 @@ Ligne éditoriale : neutralité sur le fond, rien n'est inventé au-delà de la 
 ## To-do (data/todo.json, agent Agenda)
 
 L'onglet **Tâches** affiche `data/todo.json` (hors git : rien n'est effacé aux mises à jour). Deux écrivains seulement, qui passent par le même code (`todo.py`, verrou `flock`, aucune modification perdue) :
-- le site : Maxime coche, ajoute (une date `AAAA-MM-JJ` et une heure tapées dans le texte deviennent l'échéance), supprime ;
+- le site, qui classe par échéance puis par projet (trié par urgence) : Maxime coche, ajoute (une date `AAAA-MM-JJ` et une heure tapées dans le texte deviennent l'échéance), supprime ;
 - l'agent **Agenda**, par SSH, via `bin/xena-todo` (sortie JSON, codes de retour 0 / 1 refusé / 2 usage) :
   ```bash
   ssh agenda@<ct104> lister [--a-faire]
-  ssh agenda@<ct104> ajouter "Appeler le notaire" --echeance 2026-10-26 --heure 10:30 --groupe Administratif
+  ssh agenda@<ct104> ajouter "Activer la 2FA Cloudflare" --projet Infra --urgence semaine
+  ssh agenda@<ct104> ajouter "Appeler le notaire" --echeance 2026-10-26 --heure 10:30
   ssh agenda@<ct104> cocher <id>        # ou decocher
   ssh agenda@<ct104> modifier <id> --echeance 2026-10-27   # "" efface
   ssh agenda@<ct104> supprimer <id>
   ```
 
-Format d'une tâche : `id`, `texte`, `echeance` (AAAA-MM-JJ ou null), `heure` (HH:MM ou null), `groupe`, `source` (`agenda` ou `maxime`), `fait`, `fait_par`, `fait_le`, `cree_le`, `modifie_le` (détail dans `todo.py`). Le service Xena tient une copie de secours dans `data/todo.backup.json`.
+Format d'une tâche : `id`, `texte`, `projet`, `urgence` (`aujourd'hui`, `semaine`, `un jour` ou null), `echeance` (AAAA-MM-JJ ou null), `heure` (HH:MM ou null), `groupe`, `source` (`agenda` ou `maxime`), `fait`, `fait_par`, `fait_le`, `cree_le`, `modifie_le` (détail dans `todo.py`). Le service Xena tient une copie de secours dans `data/todo.backup.json`.
 
 **Mise en place sur le CT 104 (une fois)** : utilisateur `agenda` avec un shell normal (`/bin/sh` ou `/bin/bash`, pas `nologin` : la commande forcée passe par le shell), et dans `~agenda/.ssh/authorized_keys` :
 ```

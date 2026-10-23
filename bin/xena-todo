@@ -7,13 +7,13 @@ la commande demandée par l'agent arrive dans SSH_ORIGINAL_COMMAND.
 Sortie : du JSON sur stdout. Code de retour : 0 réussi, 1 refusé (tâche introuvable, valeur invalide), 2 usage.
 
   lister [--a-faire]                                   toutes les tâches (ou seulement celles à faire)
-  ajouter "TEXTE" [--echeance AAAA-MM-JJ] [--heure HH:MM] [--groupe G]
+  ajouter "TEXTE" [--projet P] [--urgence "aujourd'hui"|semaine|"un jour"] [--echeance AAAA-MM-JJ] [--heure HH:MM] [--groupe G]
   cocher ID          decocher ID
-  modifier ID [--texte T] [--echeance D] [--heure H] [--groupe G]     (valeur "" = effacer)
+  modifier ID [--texte T] [--projet P] [--urgence U] [--echeance D] [--heure H] [--groupe G]   (valeur "" = effacer)
   supprimer ID
   aide
 
-Exemple : ssh agenda@ct104 ajouter "Appeler le notaire" --echeance 2026-10-26 --heure 10:30
+Exemple : ssh agenda@ct104 ajouter "Activer la 2FA Cloudflare" --projet Infra --urgence semaine
 """
 import argparse
 import json
@@ -53,6 +53,8 @@ def parser() -> argparse.ArgumentParser:
         sp.add_argument("--echeance")
         sp.add_argument("--heure")
         sp.add_argument("--groupe")
+        sp.add_argument("--projet")
+        sp.add_argument("--urgence")
     sub.add_parser("aide", add_help=False)
     return p
 
@@ -78,11 +80,13 @@ def main() -> int:
                 taches = [t for t in taches if not t.get("fait")]
             return out({"ok": True, "taches": taches})
         if args.cmd == "ajouter":
-            return out({"ok": True, "tache": todo.ajouter(args.texte, AUTEUR, args.echeance, args.heure, args.groupe)})
+            return out({"ok": True, "tache": todo.ajouter(args.texte, AUTEUR, args.echeance, args.heure, args.groupe,
+                                                         args.projet, args.urgence)})
         if args.cmd in ("cocher", "decocher"):
             return out({"ok": True, "tache": todo.cocher(args.id, AUTEUR, fait=args.cmd == "cocher")})
         if args.cmd == "modifier":
-            return out({"ok": True, "tache": todo.modifier(args.id, args.texte, args.echeance, args.heure, args.groupe)})
+            return out({"ok": True, "tache": todo.modifier(args.id, args.texte, args.echeance, args.heure, args.groupe,
+                                                          args.projet, args.urgence)})
         if args.cmd == "supprimer":
             return out({"ok": True, "tache": todo.supprimer(args.id)})
     except todo.TodoError as e:
