@@ -381,9 +381,9 @@ async function openFromHash() {
 }
 
 // ------------------------------------------------------------------ checklists
-// Les tâches viennent des fichiers Markdown des dossiers surveillés (agenda/, idees/) ou sont ajoutées ici.
-// D'abord ce qui a une échéance, par date ; puis le reste par dossier et par fichier ; les faites repliées en bas.
-const SOURCES = { agenda: "Agenda", idees: "Idées", perso: "Perso" };
+// Les tâches vivent dans data/todo.json : l'agent Agenda les ajoute et les coche par xena-todo, Maxime ici.
+// D'abord ce qui a une échéance, par date ; puis le reste par groupe ; les faites repliées en bas.
+const SOURCES = { agenda: "Agenda", maxime: "Ajoutées ici" };
 const todayISO = () => new Date().toLocaleDateString("sv-SE"); // AAAA-MM-JJ local
 
 function updateTachesCount(taches) {
@@ -424,23 +424,19 @@ async function renderTaches() {
       parts.push(renderTache(t));
     }
   }
-  const bySource = new Map();
+  const byGroupe = new Map();
   for (const t of todo.filter((t) => !t.echeance)) {
-    if (!bySource.has(t.source)) bySource.set(t.source, []);
-    bySource.get(t.source).push(t);
+    const g = t.groupe || SOURCES[t.source] || t.source;
+    if (!byGroupe.has(g)) byGroupe.set(g, []);
+    byGroupe.get(g).push(t);
   }
-  for (const [source, list] of bySource) {
-    parts.push(h("div", { class: "day" }, SOURCES[source] || source));
-    let last = null;
-    for (const t of list) {
-      const where = [t.fichier ? t.fichier.split("/").slice(1).join("/").replace(/\.md$/i, "") : "", t.groupe || ""].filter(Boolean).join(" · ");
-      if (where && where !== last) { parts.push(h("div", { class: "task-day" }, where)); last = where; }
-      parts.push(renderTache(t));
-    }
+  for (const [groupe, list] of byGroupe) {
+    parts.push(h("div", { class: "day" }, groupe));
+    parts.push(...list.map(renderTache));
   }
   if (!todo.length) parts.push(h("p", { class: "empty" }, taches.length ? "Tout est fait." : "Aucune tâche pour l'instant."));
   if (done.length) {
-    done.sort((a, b) => (b.fait_at || "").localeCompare(a.fait_at || ""));
+    done.sort((a, b) => (b.fait_le || "").localeCompare(a.fait_le || ""));
     parts.push(h("details", { class: "task-done" }, h("summary", {}, `Faites (${done.length})`), done.slice(0, 50).map(renderTache)));
   }
   feed.replaceChildren(...parts);
@@ -455,18 +451,20 @@ function tacheTexte(t) {
 }
 
 function renderTache(t) {
-  const meta = [t.heure, t.echeance && t.fait ? t.echeance : ""].filter(Boolean).join(" · ");
+  const meta = [t.heure, t.echeance && t.fait ? t.echeance : "", t.fait && t.fait_par === "agenda" ? "cochée par Agenda" : "",
+    t.echeance && t.groupe ? t.groupe : ""].filter(Boolean).join(" · ");
   return h("label", { class: "task" + (t.fait ? " done" : "") },
     h("input", { type: "checkbox", checked: !!t.fait, onchange: async (e) => {
       try { await postJson(`/api/taches/${t.id}`, { fait: e.target.checked }); } catch (err) { alert("⚠ " + err.message); }
       renderTaches();
     } }),
     h("span", { class: "task-text" }, tacheTexte(t), meta ? h("span", { class: "task-meta" }, meta) : null),
-    t.source === "perso" ? h("button", { class: "ibtn task-del", "aria-label": "Supprimer", onclick: async (e) => {
+    h("button", { class: "ibtn task-del", "aria-label": "Supprimer", onclick: async (e) => {
       e.preventDefault();
+      if (!confirm(`Supprimer « ${tacheTexte(t)} » ?`)) return;
       await postJson(`/api/taches/${t.id}`, { supprimer: true }).catch(() => {});
       renderTaches();
-    } }, "✕") : null,
+    } }, "✕"),
   );
 }
 

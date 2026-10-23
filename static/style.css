@@ -178,7 +178,7 @@ a { color: inherit; }
 }
 .lead { font-family: var(--serif); font-size: 18px; margin: 0 0 12px; }
 .more { display: block; margin: 20px auto; }
-.empty { color: var(--muted); text-align: center; margin-top: 60px; }
+p.empty { color: var(--muted); text-align: center; margin-top: 60px; }
 
 .btn {
   border: 1px solid var(--text); background: var(--text); color: var(--bg);

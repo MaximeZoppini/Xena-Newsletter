@@ -5,8 +5,8 @@ from typing import Optional
 
 from alertes import Alerter
 from analyzer import NewsAnalyzer
+import todo
 from briefing import Briefer
-from checklists import Checklists
 from dossiers import Threader
 from config import FEEDS, DATABASE_PATH, MIN_INTEREST_SCORE, POLL_INTERVAL_SECONDS, WEB_HOST, WEB_PORT
 from sources import get_all_new_candidates
@@ -101,7 +101,6 @@ def main():
     threader = Threader(storage)
     synthesizer = Synthesizer(storage)
     alerter = Alerter(storage)
-    checklists = Checklists(storage)
 
     if args.test_sources:
         candidates = get_all_new_candidates(storage)
@@ -133,6 +132,11 @@ def main():
     start_web_server(storage, briefer, alerter, host=WEB_HOST, port=WEB_PORT)
     logger.info(f"🚀 Xena active : veille toutes les {POLL_INTERVAL_SECONDS}s, site sur http://{WEB_HOST}:{WEB_PORT}")
 
+    try:
+        todo.initialiser()
+    except Exception as e:
+        logger.error(f"To-do : {e}", exc_info=True)
+
     # Images manquantes des news importantes des dernières 24 h
     try:
         for r in storage.list_recent(min_score=MIN_INTEREST_SCORE, hours=24, limit=200):
@@ -154,9 +158,9 @@ def main():
         except Exception as e:
             logger.error(f"Erreur inattendue dans la boucle : {e}", exc_info=True)
         try:
-            checklists.scan()
+            todo.initialiser()  # droits des fichiers pour l'agent Agenda, copie de secours
         except Exception as e:
-            logger.error(f"Lecture des checklists : {e}", exc_info=True)
+            logger.error(f"To-do : {e}", exc_info=True)
         time.sleep(POLL_INTERVAL_SECONDS)
 
 

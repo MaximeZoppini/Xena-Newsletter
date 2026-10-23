@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+"""
+xena-todo : la to-do de Maxime (data/todo.json), pour l'agent Agenda.
+
+Appelée par SSH avec une clé restreinte (command="/opt/x-newsletter/bin/xena-todo") :
+la commande demandée par l'agent arrive dans SSH_ORIGINAL_COMMAND.
+Sortie : du JSON sur stdout. Code de retour : 0 réussi, 1 refusé (tâche introuvable, valeur invalide), 2 usage.
+
+  lister [--a-faire]                                   toutes les tâches (ou seulement celles à faire)
+  ajouter "TEXTE" [--echeance AAAA-MM-JJ] [--heure HH:MM] [--groupe G]
+  cocher ID          decocher ID
+  modifier ID [--texte T] [--echeance D] [--heure H] [--groupe G]     (valeur "" = effacer)
+  supprimer ID
+  aide
+
+Exemple : ssh agenda@ct104 ajouter "Appeler le notaire" --echeance 2026-10-26 --heure 10:30
+"""
+import argparse
+import json
+import os
+import shlex
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import todo  # noqa: E402
+
+AUTEUR = os.getenv("XENA_TODO_AUTEUR", "agenda")
+
+
+class Usage(Exception):
+    pass
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        raise Usage(message)
+
+
+def parser() -> argparse.ArgumentParser:
+    p = Parser(prog="xena-todo", add_help=False)
+    sub = p.add_subparsers(dest="cmd")
+    ls = sub.add_parser("lister", add_help=False)
+    ls.add_argument("--a-faire", action="store_true")
+    add = sub.add_parser("ajouter", add_help=False)
+    add.add_argument("texte")
+    for name in ("cocher", "decocher", "supprimer"):
+        sub.add_parser(name, add_help=False).add_argument("id")
+    mod = sub.add_parser("modifier", add_help=False)
+    mod.add_argument("id")
+    mod.add_argument("--texte")
+    for sp in (add, mod):
+        sp.add_argument("--echeance")
+        sp.add_argument("--heure")
+        sp.add_argument("--groupe")
+    sub.add_parser("aide", add_help=False)
+    return p
+
+
+def out(obj, code=0):
+    print(json.dumps(obj, ensure_ascii=False, indent=2))
+    return code
+
+
+def main() -> int:
+    raw = os.environ.get("SSH_ORIGINAL_COMMAND")
+    try:
+        argv = shlex.split(raw) if raw is not None else sys.argv[1:]
+        args = parser().parse_args(argv)
+    except (ValueError, Usage) as e:
+        return out({"ok": False, "erreur": f"usage : {e}", "aide": __doc__.strip()}, 2)
+    try:
+        if args.cmd in (None, "aide"):
+            return out({"ok": True, "aide": __doc__.strip()})
+        if args.cmd == "lister":
+            taches = todo.lister()
+            if args.a_faire:
+                taches = [t for t in taches if not t.get("fait")]
+            return out({"ok": True, "taches": taches})
+        if args.cmd == "ajouter":
+            return out({"ok": True, "tache": todo.ajouter(args.texte, AUTEUR, args.echeance, args.heure, args.groupe)})
+        if args.cmd in ("cocher", "decocher"):
+            return out({"ok": True, "tache": todo.cocher(args.id, AUTEUR, fait=args.cmd == "cocher")})
+        if args.cmd == "modifier":
+            return out({"ok": True, "tache": todo.modifier(args.id, args.texte, args.echeance, args.heure, args.groupe)})
+        if args.cmd == "supprimer":
+            return out({"ok": True, "tache": todo.supprimer(args.id)})
+    except todo.TodoError as e:
+        return out({"ok": False, "erreur": str(e)}, 1)
+    return out({"ok": False, "erreur": "commande inconnue"}, 2)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

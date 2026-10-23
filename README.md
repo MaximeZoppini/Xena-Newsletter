@@ -6,7 +6,7 @@ Xena lit en continu des médias d'investigation et tech, note chaque publication
 - **À écouter** : un résumé audio lu calmement (voix Gemini, générée une fois puis mise en cache).
 - **À retenir** : deux fois par jour (7 h et 19 h), une **synthèse 12 h** en tête du fil : une phrase qui porte le jugement, l'action à faire ou « rien », puis le confirmé, le faux ou non confirmé, ce qui a changé et ce qui ne se passe pas (voir `SYNTHESE.md`).
 - **À recevoir** : Xena s'installe comme une app (Safari → Partager → Sur l'écran d'accueil) et envoie une **notification push** pour les vraies méga-dingueries seulement (voir plus bas).
-- **À faire** : l'onglet **Tâches** transforme en checklist les fichiers Markdown qu'un agent dépose dans `agenda/` et `idees/` (voir plus bas).
+- **À faire** : l'onglet **Tâches**, la to-do partagée avec l'agent Agenda (voir plus bas).
 - **À suivre** : une histoire qui évolue est un seul **dossier vivant**. Sa carte dit en une phrase où en est la situation (« Trump suspend les discussions avec Moscou », puis « Trump relance les négociations avec la Russie ») ; le fil se déplie étape par étape, les nouvelles depuis la dernière lecture en avant.
 - **À discuter** : on parle à voix haute à une IA de haut niveau sur l'article ou un concept qu'on ne comprend pas. Pas de coupure automatique : on prend le temps de formuler, on appuie pour envoyer. Réponse lue lentement, vitesse réglable.
 
@@ -37,21 +37,26 @@ flowchart LR
 **Images** : chaque carte du fil a une vignette carrée : l'image du flux ou de la page de l'article, sinon la photo ou le logo Wikipédia du principal acteur ou produit cité (gratuit, sans clé, cherché une fois par article). Un dossier prend l'image de son article le plus récent.
 Ligne éditoriale : neutralité sur le fond, rien n'est inventé au-delà de la source, aucun contournement de paywall.
 
-## Checklists (agenda/, idees/)
+## To-do (data/todo.json, agent Agenda)
 
-Tout fichier `.md` déposé dans `agenda/` ou `idees/` (sous-dossiers compris, `README.md` ignoré) devient une liste de tâches dans l'onglet **Tâches**, relue à chaque passage de la veille (toutes les 60 s) ; seuls les fichiers modifiés sont retraités.
-
-- **Format recommandé pour l'agent** : des cases à cocher Markdown, lues telles quelles, sans IA :
-  ```markdown
-  # Lundi
-  - [ ] Appeler le notaire 2026-10-26 10:30
-  - [x] Payer le loyer
+L'onglet **Tâches** affiche `data/todo.json` (hors git : rien n'est effacé aux mises à jour). Deux écrivains seulement, qui passent par le même code (`todo.py`, verrou `flock`, aucune modification perdue) :
+- le site : Maxime coche, ajoute (une date `AAAA-MM-JJ` et une heure tapées dans le texte deviennent l'échéance), supprime ;
+- l'agent **Agenda**, par SSH, via `bin/xena-todo` (sortie JSON, codes de retour 0 / 1 refusé / 2 usage) :
+  ```bash
+  ssh agenda@<ct104> lister [--a-faire]
+  ssh agenda@<ct104> ajouter "Appeler le notaire" --echeance 2026-10-26 --heure 10:30 --groupe Administratif
+  ssh agenda@<ct104> cocher <id>        # ou decocher
+  ssh agenda@<ct104> modifier <id> --echeance 2026-10-27   # "" efface
+  ssh agenda@<ct104> supprimer <id>
   ```
-  Une date `AAAA-MM-JJ` devient l'échéance, une heure `HH:MM` (ou `10h30`) l'heure ; le titre de section devient le groupe.
-- **Texte libre** (sans case à cocher) : Gemini Flash en extrait les tâches concrètes, une fois par version du fichier ; une idée sans action devient « Creuser : … ».
-- **Cocher dans Xena** est gardé en base : une réécriture du fichier par l'agent ne décoche pas une tâche faite. Une tâche retirée du fichier disparaît ; un fichier supprimé retire ses tâches.
-- Les dossiers surveillés se règlent avec `XENA_CHECKLIST_DIRS` (par défaut `agenda,idees`, relatifs au dépôt ; chemins absolus acceptés pour un dossier sur le serveur, hors git).
-- On peut aussi ajouter une tâche à la main dans l'onglet (section « Perso »).
+
+Format d'une tâche : `id`, `texte`, `echeance` (AAAA-MM-JJ ou null), `heure` (HH:MM ou null), `groupe`, `source` (`agenda` ou `maxime`), `fait`, `fait_par`, `fait_le`, `cree_le`, `modifie_le` (détail dans `todo.py`). Le service Xena tient une copie de secours dans `data/todo.backup.json`.
+
+**Mise en place sur le CT 104 (une fois)** : utilisateur `agenda` avec un shell normal (`/bin/sh` ou `/bin/bash`, pas `nologin` : la commande forcée passe par le shell), et dans `~agenda/.ssh/authorized_keys` :
+```
+restrict,command="/opt/x-newsletter/bin/xena-todo" ssh-ed25519 AAAA…clé-publique-d-Agenda… agenda
+```
+`restrict` coupe terminal, redirections et agent ; `command=` impose `xena-todo` quoi que l'agent demande : la clé ne donne accès ni à un shell, ni à `.env`, ni à la base. Les fichiers `data/todo.json` et `data/todo.json.lock` sont créés par le service en `root:agenda`, mode `660` (repris automatiquement si le groupe `agenda` est créé après coup) ; `agenda` n'a besoin d'aucun autre droit d'écriture.
 
 ## Fichiers
 
@@ -63,7 +68,7 @@ Tout fichier `.md` déposé dans `agenda/` ou `idees/` (sous-dossiers compris, `
 | `synthese.py` | Synthèse 12 h en cinq passes (regroupement, importance, synthèse, contradicteur) |
 | `reglages.py` + `reglages/` | Composants critiques, questions négatives, profil : valeurs par défaut, modifiables depuis le site |
 | `alertes.py` + `static/sw.js` | Notifications push : décision, envoi, service worker |
-| `checklists.py` + `agenda/`, `idees/` | Tâches extraites des fichiers Markdown déposés par un agent |
+| `todo.py` + `bin/xena-todo` | To-do (`data/todo.json`) : lecture et écriture verrouillées, commande SSH de l'agent Agenda |
 | `dossiers.py` | Dossiers vivants : rangement des news et fil d'évolution |
 | `briefing.py` | Fiche de lecture, voix (TTS), conversation |
 | `web.py` + `static/` | Site et API JSON |

@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, urlparse
 
 import reglages
 from alertes import Alerter
-from checklists import CHECKLIST_DIRS, _dates
+import todo
 from briefing import Briefer
 from config import MIN_INTEREST_SCORE, STATIC_DIR
 from storage import Storage
@@ -24,7 +24,7 @@ logger = logging.getLogger("web")
 MAX_BODY = 25 * 1024 * 1024  # ~10 min d'audio WAV 16 kHz
 ARTICLE_RE = re.compile(r"^/api/articles/([0-9a-f]{16})(/audio)?$")
 DOSSIER_RE = re.compile(r"^/api/dossiers/(\d{1,9})$")
-TASK_RE = re.compile(r"^/api/taches/([0-9a-f]{16})$")
+TASK_RE = re.compile(r"^/api/taches/([0-9a-f]{12})$")
 CONV_RE = re.compile(r"^/api/conversations/([0-9a-zA-Z-]{8,64})$")
 AUDIO_TYPES = {"audio/mp4", "audio/aac", "audio/webm", "audio/ogg", "audio/wav", "audio/mpeg"}
 
@@ -150,7 +150,7 @@ class Handler(BaseHTTPRequestHandler):
                 syn.pop("clusters", None)  # volumineux, inutile à l'affichage
                 return self._json(200, syn)
             if url.path == "/api/taches":
-                return self._json(200, {"taches": self.storage.list_tasks(), "dossiers": CHECKLIST_DIRS})
+                return self._json(200, {"taches": todo.lister()})
             if url.path == "/api/reglages":
                 return self._json(200, {
                     **{name: reglages.get_text(self.storage, name) for name in reglages.TEXTES},
@@ -212,15 +212,25 @@ class Handler(BaseHTTPRequestHandler):
                     reglages.set_seuil_push(self.storage, body["seuil_push"])
                 return self._json(200, {"ok": True})
             if url.path == "/api/taches":
-                texte = (body.get("texte") or "").strip()[:300]
-                if not texte:
-                    return self._json(400, {"error": "tâche vide"})
-                echeance, heure = _dates(texte)
-                return self._json(200, {"id": self.storage.add_task(texte, echeance, heure)})
+                texte = body.get("texte") or ""
+                echeance, heure = todo.dates_du_texte(texte)
+                # La date et l'heure tapées dans le texte deviennent l'échéance, et quittent le texte
+                if echeance:
+                    texte = re.sub(r"\s*\b20\d\d-[01]\d-[0-3]\d\b", "", texte, count=1)
+                if heure:
+                    texte = re.sub(r"\s*(à\s+)?\b([01]?\d|2[0-3])[:h]([0-5]\d)?\b", "", texte, count=1)
+                try:
+                    return self._json(200, {"tache": todo.ajouter(texte, "maxime", echeance, heure)})
+                except todo.TodoError as e:
+                    return self._json(400, {"error": str(e)})
             t = TASK_RE.match(url.path)
             if t:
-                ok = self.storage.set_task(t.group(1), fait=bool(body.get("fait")), supprimer=bool(body.get("supprimer")))
-                return self._json(200 if ok else 404, {"ok": ok})
+                try:
+                    if body.get("supprimer"):
+                        return self._json(200, {"tache": todo.supprimer(t.group(1))})
+                    return self._json(200, {"tache": todo.cocher(t.group(1), "maxime", fait=bool(body.get("fait")))})
+                except todo.TodoError as e:
+                    return self._json(404, {"error": str(e)})
             if url.path == "/api/push/subscribe":
                 sub = body.get("subscription") or {}
                 endpoint = sub.get("endpoint") or ""

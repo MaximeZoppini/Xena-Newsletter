@@ -229,32 +229,6 @@ class Storage:
                     envoyes INTEGER DEFAULT 0
                 )
             """)
-            # Checklists : tâches issues des fichiers Markdown surveillés (ou ajoutées à la main, fichier NULL)
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS checklist_files (
-                    fichier TEXT PRIMARY KEY,
-                    source TEXT NOT NULL,
-                    hash TEXT NOT NULL,
-                    synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS checklist_tasks (
-                    id TEXT PRIMARY KEY,
-                    source TEXT NOT NULL,      -- 'agenda', 'idees'... ou 'perso' pour une tâche ajoutée dans Xena
-                    fichier TEXT,
-                    groupe TEXT,
-                    texte TEXT NOT NULL,
-                    echeance TEXT,
-                    heure TEXT,
-                    position INTEGER DEFAULT 0,
-                    fait INTEGER DEFAULT 0,
-                    fait_source TEXT,          -- 'fichier' (coché par l'agent) ou 'xena' (coché par Maxime)
-                    fait_at TIMESTAMP,
-                    present INTEGER DEFAULT 1, -- 0 : retirée du fichier ou supprimée
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_dossier_articles_d ON dossier_articles(dossier_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_articles_ingested ON articles(ingested_at)")
@@ -634,89 +608,6 @@ class Storage:
         with self._get_connection() as conn:
             rows = conn.execute("SELECT created_at, article_id, titre, corps, raison, envoyes FROM push_log ORDER BY id DESC LIMIT ?",
                                 (limit,)).fetchall()
-            return [dict(r) for r in rows]
-
-    # ------------------------------------------------------------- checklists
-    def checklist_file_hash(self, fichier: str) -> Optional[str]:
-        with self._get_connection() as conn:
-            row = conn.execute("SELECT hash FROM checklist_files WHERE fichier = ?", (fichier,)).fetchone()
-            return row["hash"] if row else None
-
-    def checklist_files(self) -> List[str]:
-        with self._get_connection() as conn:
-            return [r["fichier"] for r in conn.execute("SELECT fichier FROM checklist_files").fetchall()]
-
-    def sync_checklist_file(self, fichier: str, source: str, digest: Optional[str], tasks: List[Dict[str, Any]]):
-        """Aligne les tâches d'un fichier sur sa nouvelle version, sans perdre ce que Maxime a coché."""
-        with self._get_connection() as conn:
-            if digest is None:
-                conn.execute("DELETE FROM checklist_files WHERE fichier = ?", (fichier,))
-            else:
-                conn.execute("""
-                    INSERT INTO checklist_files (fichier, source, hash) VALUES (?, ?, ?)
-                    ON CONFLICT(fichier) DO UPDATE SET hash = excluded.hash, synced_at = CURRENT_TIMESTAMP
-                """, (fichier, source, digest))
-            existing = {r["id"]: dict(r) for r in conn.execute(
-                "SELECT id, fait, fait_source FROM checklist_tasks WHERE fichier = ?", (fichier,)).fetchall()}
-            keep = set()
-            for t in tasks:
-                keep.add(t["id"])
-                old = existing.get(t["id"])
-                if old is None:
-                    conn.execute("""
-                        INSERT INTO checklist_tasks (id, source, fichier, groupe, texte, echeance, heure, position, fait, fait_source, fait_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? THEN CURRENT_TIMESTAMP END)
-                        ON CONFLICT(id) DO UPDATE SET present = 1
-                    """, (t["id"], source, fichier, t.get("groupe"), t["texte"], t.get("echeance"), t.get("heure"),
-                          t.get("position", 0), 1 if t.get("fait") else 0, "fichier" if t.get("fait") else None,
-                          1 if t.get("fait") else 0))
-                    continue
-                fait, fait_source = old["fait"], old["fait_source"]
-                if t.get("fait") and not fait:
-                    fait, fait_source = 1, "fichier"
-                elif not t.get("fait") and fait and fait_source == "fichier":
-                    fait, fait_source = 0, None
-                conn.execute("""
-                    UPDATE checklist_tasks SET groupe = ?, texte = ?, echeance = ?, heure = ?, position = ?, present = 1,
-                        fait_at = CASE WHEN ? AND NOT fait THEN CURRENT_TIMESTAMP WHEN ? THEN fait_at END,
-                        fait = ?, fait_source = ?
-                    WHERE id = ?
-                """, (t.get("groupe"), t["texte"], t.get("echeance"), t.get("heure"), t.get("position", 0),
-                      fait, fait, fait, fait_source, t["id"]))
-            gone = [i for i in existing if i not in keep]
-            if gone:
-                conn.executemany("UPDATE checklist_tasks SET present = 0 WHERE id = ?", [(i,) for i in gone])
-            conn.commit()
-
-    def add_task(self, texte: str, echeance: Optional[str] = None, heure: Optional[str] = None) -> str:
-        import uuid
-        tid = uuid.uuid4().hex[:16]
-        with self._get_connection() as conn:
-            conn.execute("INSERT INTO checklist_tasks (id, source, texte, echeance, heure, position) VALUES (?, 'perso', ?, ?, ?, 0)",
-                         (tid, texte, echeance, heure))
-            conn.commit()
-        return tid
-
-    def set_task(self, task_id: str, fait: Optional[bool] = None, supprimer: bool = False) -> bool:
-        with self._get_connection() as conn:
-            if supprimer:
-                cur = conn.execute("UPDATE checklist_tasks SET present = 0 WHERE id = ? AND source = 'perso'", (task_id,))
-            else:
-                cur = conn.execute("""
-                    UPDATE checklist_tasks SET fait = ?, fait_source = CASE WHEN ? THEN 'xena' END,
-                        fait_at = CASE WHEN ? THEN CURRENT_TIMESTAMP END
-                    WHERE id = ?
-                """, (1 if fait else 0, 1 if fait else 0, 1 if fait else 0, task_id))
-            conn.commit()
-            return cur.rowcount > 0
-
-    def list_tasks(self) -> List[Dict[str, Any]]:
-        with self._get_connection() as conn:
-            rows = conn.execute("""
-                SELECT id, source, fichier, groupe, texte, echeance, heure, fait, fait_source, fait_at, created_at
-                FROM checklist_tasks WHERE present = 1
-                ORDER BY source, fichier, position, created_at
-            """).fetchall()
             return [dict(r) for r in rows]
 
     # ------------------------------------------------------------- état
