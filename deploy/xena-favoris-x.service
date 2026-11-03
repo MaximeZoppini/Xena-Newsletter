@@ -1,0 +1,8 @@
+[Unit]
+Description=Xena - récupère les nouveaux favoris X de Maxime
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/x-newsletter
+ExecStart=/opt/x-newsletter/venv/bin/python favoris_x.py

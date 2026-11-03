@@ -36,8 +36,9 @@ SORTIE = DATA_DIR / "favoris_x.md"
 
 # Premier passage : on ne remonte que les plus récents, pour ne pas vider les crédits
 PREMIER_PASSAGE_MAX = int(os.getenv("X_FAVORIS_PREMIER_MAX", "100"))
-# Passages suivants : première page courte, chaque favori relu est facturé (dédoublonné sur 24 h)
-PAGE_COURTE = int(os.getenv("X_FAVORIS_PAGE_COURTE", "5"))
+# Passages suivants : chaque favori relu est facturé, donc on sonde 1 favori,
+# puis les 5 suivants s'il est nouveau, puis par pages de 100
+PAGES_SONDAGE = [1, 5]
 
 
 def _lire(path, defaut):
@@ -121,10 +122,10 @@ def recuperer():
     t = _jeton()
     vus = set(_lire(VUS_FILE, []))
     premier = not vus
-    nouveaux, page = [], None
+    nouveaux, page, n_page = [], None, 0
     while True:
         params = {
-            "max_results": 100 if premier or page else PAGE_COURTE,
+            "max_results": 100 if premier or n_page >= len(PAGES_SONDAGE) else PAGES_SONDAGE[n_page],
             "tweet.fields": "created_at,entities,note_tweet,attachments,author_id",
             "expansions": "author_id,attachments.media_keys",
             "user.fields": "username,name",
@@ -146,6 +147,7 @@ def recuperer():
             nouveaux.append(_formater(tweet, users, medias))
             vus.add(tweet["id"])
         page = corps.get("meta", {}).get("next_token")
+        n_page += 1
         if deja_vu or not page or (premier and len(nouveaux) >= PREMIER_PASSAGE_MAX):
             break
 

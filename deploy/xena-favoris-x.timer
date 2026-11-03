@@ -1,0 +1,9 @@
+[Unit]
+Description=Xena - favoris X toutes les 12 heures
+
+[Timer]
+OnCalendar=*-*-* 07,19:13:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
