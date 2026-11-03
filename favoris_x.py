@@ -36,6 +36,8 @@ SORTIE = DATA_DIR / "favoris_x.md"
 
 # Premier passage : on ne remonte que les plus récents, pour ne pas vider les crédits
 PREMIER_PASSAGE_MAX = int(os.getenv("X_FAVORIS_PREMIER_MAX", "100"))
+# Passages suivants : première page courte, chaque favori relu est facturé (dédoublonné sur 24 h)
+PAGE_COURTE = int(os.getenv("X_FAVORIS_PAGE_COURTE", "5"))
 
 
 def _lire(path, defaut):
@@ -122,7 +124,7 @@ def recuperer():
     nouveaux, page = [], None
     while True:
         params = {
-            "max_results": 100,
+            "max_results": 100 if premier or page else PAGE_COURTE,
             "tweet.fields": "created_at,entities,note_tweet,attachments,author_id",
             "expansions": "author_id,attachments.media_keys",
             "user.fields": "username,name",
