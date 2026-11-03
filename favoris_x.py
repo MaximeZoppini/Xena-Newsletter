@@ -3,6 +3,7 @@
   python favoris_x.py auth           -> affiche le lien d'autorisation
   python favoris_x.py code <URL>     -> enregistre les jetons (URL de retour 127.0.0.1)
   python favoris_x.py                -> ajoute les nouveaux favoris
+  python favoris_x.py lire [--tout]  -> affiche les favoris pas encore lus et les marque lus
 
 Jetons et favoris vus dans data/ (hors git, droits 600). Coût : 0,001 $ par favori lu.
 """
@@ -33,6 +34,7 @@ DATA_DIR = BASE_DIR / "data"
 AUTH_FILE = DATA_DIR / "x_auth.json"
 VUS_FILE = DATA_DIR / "favoris_x_vus.json"
 SORTIE = DATA_DIR / "favoris_x.md"
+LU_FILE = DATA_DIR / "favoris_x_lu.json"
 
 # Premier passage : on ne remonte que les plus récents, pour ne pas vider les crédits
 PREMIER_PASSAGE_MAX = int(os.getenv("X_FAVORIS_PREMIER_MAX", "100"))
@@ -196,9 +198,21 @@ def recuperer():
     print(f"{len(nouveaux)} nouveau(x) favori(s)")
 
 
+def lire(tout=False):
+    """Pour l'agent Infra : la partie de favoris_x.md ajoutée depuis la dernière lecture."""
+    if not SORTIE.exists():
+        return print("Aucun favori.")
+    contenu = SORTIE.read_bytes()
+    debut = 0 if tout else _lire(LU_FILE, {}).get("octets", 0)
+    print(contenu[debut:].decode().strip() or "Rien de nouveau.")
+    _ecrire(LU_FILE, {"octets": len(contenu), "le": f"{datetime.now():%d/%m/%Y %H:%M}"})
+
+
 if __name__ == "__main__":
     if sys.argv[1:2] == ["auth"]:
         auth()
+    elif sys.argv[1:2] == ["lire"]:
+        lire("--tout" in sys.argv)
     elif sys.argv[1:2] == ["code"] and len(sys.argv) > 2:
         code(sys.argv[2])
     else:
