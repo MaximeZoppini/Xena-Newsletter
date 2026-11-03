@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlparse
 
 import reglages
 from alertes import Alerter
+import favoris_x
 import todo
 from briefing import Briefer
 from config import MIN_INTEREST_SCORE, STATIC_DIR
@@ -151,6 +152,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, syn)
             if url.path == "/api/taches":
                 return self._json(200, {"taches": todo.lister()})
+            if url.path == "/api/favoris":
+                return self._json(200, {"favoris": favoris_x.lister()})
             if url.path == "/api/reglages":
                 return self._json(200, {
                     **{name: reglages.get_text(self.storage, name) for name in reglages.TEXTES},

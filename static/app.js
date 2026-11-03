@@ -284,6 +284,7 @@ function initTabs() {
 
 async function renderFeed() {
   if (filtre === "taches") return renderTaches();
+  if (filtre === "favoris") return renderFavoris();
   const feed = $("#feed");
   feed.replaceChildren(h("div", { class: "loading" }, "Chargement…"));
   feedState = { offset: 0, lastDay: null, dossiers: new Set() };
@@ -396,6 +397,24 @@ function updateTachesCount(taches) {
 
 async function refreshTachesCount() {
   try { updateTachesCount((await (await api("/api/taches")).json()).taches); } catch { /* hors ligne */ }
+}
+
+async function renderFavoris() {
+  const feed = $("#feed");
+  let favoris = [];
+  try { favoris = (await (await api("/api/favoris")).json()).favoris; } catch (e) {
+    feed.replaceChildren(h("p", { class: "empty" }, "Erreur : " + e.message)); return;
+  }
+  if (!favoris.length) return feed.replaceChildren(h("p", { class: "empty" }, "Aucun favori pour l'instant."));
+  const carte = (f) => {
+    const long = f.texte.length > 400;
+    const entete = h("a", { class: "fav-head", href: f.url, target: "_blank", rel: "noopener" }, `@${f.auteur} · ${f.date}`);
+    const corps = long
+      ? h("details", {}, h("summary", {}, f.texte.slice(0, 280).trim() + "…"), h("div", { class: "fav-text" }, f.texte))
+      : h("div", { class: "fav-text" }, f.texte);
+    return h("div", { class: "fav" }, entete, corps);
+  };
+  feed.replaceChildren(...favoris.map(carte));
 }
 
 async function renderTaches() {

@@ -284,3 +284,8 @@ body:has(#player-bar:not([hidden])) .fab { bottom: calc(104px + env(safe-area-in
   .prose { font-size: 17px; }
   .fab { right: 12px; }
 }
+
+.fav { padding: 12px 0; border-bottom: 1px solid var(--line, rgba(128,128,128,.25)); }
+.fav-head { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; text-decoration: none; }
+.fav-text { font-family: var(--serif); font-size: 16px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.fav summary { cursor: pointer; font-family: var(--serif); font-size: 16px; line-height: 1.45; }

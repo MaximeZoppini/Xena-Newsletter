@@ -11,6 +11,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import secrets
 import sys
 import time
@@ -196,6 +197,27 @@ def recuperer():
             f.write(entete + "\n".join(nouveaux))
     _ecrire(VUS_FILE, sorted(vus))
     print(f"{len(nouveaux)} nouveau(x) favori(s)")
+
+
+ENTETE_RE = re.compile(r"^## @(\S+) \((.*?)\) — (\S*)$", re.M)
+LOT_RE = re.compile(r"\n# Récupérés le .*\n*")
+
+
+def lister(limite=100):
+    """Les favoris de favoris_x.md pour le site, du plus récent au plus ancien."""
+    if not SORTIE.exists():
+        return []
+    contenu = SORTIE.read_text()
+    marques = list(ENTETE_RE.finditer(contenu))
+    favoris = []
+    for i, m in enumerate(marques):
+        fin = marques[i + 1].start() if i + 1 < len(marques) else len(contenu)
+        corps = LOT_RE.sub("\n", contenu[m.end():fin]).strip()
+        url, _, texte = corps.partition("\n")
+        favoris.append({"auteur": m.group(1), "nom": m.group(2), "date": m.group(3),
+                        "url": url.strip(), "texte": texte.strip()})
+    favoris.reverse()  # le fichier est dans l'ordre de récupération, le plus récent d'abord dans chaque lot
+    return sorted(favoris, key=lambda f: f["date"], reverse=True)[:limite]
 
 
 def lire(tout=False):
