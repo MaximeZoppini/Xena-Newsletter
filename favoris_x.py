@@ -13,7 +13,7 @@ import os
 import secrets
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
@@ -39,6 +39,8 @@ PREMIER_PASSAGE_MAX = int(os.getenv("X_FAVORIS_PREMIER_MAX", "100"))
 # Passages suivants : chaque favori relu est facturé, donc on sonde 1 favori,
 # puis les 5 suivants s'il est nouveau, puis par pages de 100
 PAGES_SONDAGE = [1, 5]
+# Thread : posts de l'auteur dans la conversation, plafonnés (0,005 $ par post)
+THREAD_MAX = int(os.getenv("X_FAVORIS_THREAD_MAX", "20"))
 
 
 def _lire(path, defaut):
@@ -101,20 +103,53 @@ def _video(media):
     return max(mp4, key=lambda v: v.get("bit_rate", 0))["url"] if mp4 else None
 
 
-def _formater(tweet, users, medias):
-    auteur = users.get(tweet["author_id"], {})
-    texte = (tweet.get("note_tweet") or {}).get("text") or tweet["text"]
-    for u in (tweet.get("entities") or {}).get("urls", []):
+def _texte(tweet):
+    note = tweet.get("note_tweet") or {}
+    texte = note.get("text") or tweet["text"]
+    for u in (note.get("entities") or tweet.get("entities") or {}).get("urls", []):
         texte = texte.replace(u["url"], u.get("expanded_url", u["url"]))
+    article = tweet.get("article")
+    if article:
+        texte += f"\n\n### Article : {article.get('title', '')}\n\n{article.get('plain_text') or article.get('preview_text', '')}"
+    return texte
+
+
+def _thread(tweet, auteur, jeton):
+    """Posts de l'auteur publiés après celui-ci dans la conversation (0 résultat = 0 $)."""
+    recent = datetime.fromisoformat(tweet["created_at"].replace("Z", "+00:00")) > datetime.now(timezone.utc) - timedelta(days=6)
+    r = requests.get(f"{API}/tweets/search/{'recent' if recent else 'all'}", params={
+        "query": f"conversation_id:{tweet['conversation_id']} from:{auteur}",
+        "since_id": tweet["id"], "max_results": THREAD_MAX, "tweet.fields": "created_at,entities,note_tweet,article",
+    }, headers={"Authorization": f"Bearer {jeton}"}, timeout=30)
+    if not r.ok:
+        print(f"Thread {tweet['id']} : {r.status_code}", file=sys.stderr)
+        return []
+    return sorted(r.json().get("data", []), key=lambda p: int(p["id"]))
+
+
+def _formater(tweet, users, medias, cites, jeton):
+    auteur = users.get(tweet["author_id"], {})
     lignes = [
         f"## @{auteur.get('username', '?')} ({auteur.get('name', '')}) — {tweet.get('created_at', '')[:10]}",
         f"https://x.com/{auteur.get('username', 'i')}/status/{tweet['id']}",
-        "", texte, "",
+        "", _texte(tweet), "",
     ]
     for k in (tweet.get("attachments") or {}).get("media_keys", []):
         m = medias.get(k, {})
         if m.get("type") in ("video", "animated_gif"):
             lignes.append(f"- Vidéo : {_video(m) or m.get('preview_image_url', '')}")
+    for ref in tweet.get("referenced_tweets", []):
+        cite = cites.get(ref["id"])
+        if ref["type"] == "quoted" and cite:
+            auteur_cite = users.get(cite.get("author_id"), {}).get("username", "?")
+            lignes += ["", f"> Cite @{auteur_cite} : https://x.com/{auteur_cite}/status/{cite['id']}", ">",
+                       *(f"> {l}" for l in _texte(cite).splitlines())]
+    if tweet.get("conversation_id") and auteur.get("username"):
+        suite = _thread(tweet, auteur["username"], jeton)
+        if suite:
+            lignes += ["", f"### Suite du thread ({len(suite)} posts)"]
+            for p in suite:
+                lignes += ["", _texte(p)]
     return "\n".join(lignes).rstrip() + "\n"
 
 
@@ -126,8 +161,8 @@ def recuperer():
     while True:
         params = {
             "max_results": 100 if premier or n_page >= len(PAGES_SONDAGE) else PAGES_SONDAGE[n_page],
-            "tweet.fields": "created_at,entities,note_tweet,attachments,author_id",
-            "expansions": "author_id,attachments.media_keys",
+            "tweet.fields": "created_at,entities,note_tweet,attachments,author_id,article,referenced_tweets,conversation_id",
+            "expansions": "author_id,attachments.media_keys,referenced_tweets.id,referenced_tweets.id.author_id",
             "user.fields": "username,name",
             "media.fields": "type,variants,preview_image_url",
         }
@@ -139,12 +174,13 @@ def recuperer():
         corps = r.json()
         users = {u["id"]: u for u in corps.get("includes", {}).get("users", [])}
         medias = {m["media_key"]: m for m in corps.get("includes", {}).get("media", [])}
+        cites = {c["id"]: c for c in corps.get("includes", {}).get("tweets", [])}
         deja_vu = False
         for tweet in corps.get("data", []):
             if tweet["id"] in vus:
                 deja_vu = True
                 break
-            nouveaux.append(_formater(tweet, users, medias))
+            nouveaux.append(_formater(tweet, users, medias, cites, t["access_token"]))
             vus.add(tweet["id"])
         page = corps.get("meta", {}).get("next_token")
         n_page += 1
