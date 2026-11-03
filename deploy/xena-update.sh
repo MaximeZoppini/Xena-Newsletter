@@ -1,5 +1,7 @@
 #!/bin/bash
 # Déploiement continu : si master a bougé sur GitHub, on récupère, on installe et on redémarre.
+# L'installation est dans xena-installe.sh : bash lit ce script au fil de l'exécution,
+# donc après le reset il exécuterait encore l'ancienne version des lignes suivantes.
 set -euo pipefail
 cd /opt/x-newsletter
 
@@ -10,13 +12,5 @@ REMOTE=$(git rev-parse origin/master)
 
 echo "Mise à jour ${LOCAL:0:7} -> ${REMOTE:0:7}"
 git reset --hard --quiet origin/master
-venv/bin/pip install --quiet -r requirements.txt
-install -m 644 deploy/x-newsletter.service /etc/systemd/system/x-newsletter.service
-install -m 644 deploy/xena-update.service /etc/systemd/system/xena-update.service
-install -m 644 deploy/xena-update.timer /etc/systemd/system/xena-update.timer
-install -m 644 deploy/xena-favoris-x.service /etc/systemd/system/xena-favoris-x.service
-install -m 644 deploy/xena-favoris-x.timer /etc/systemd/system/xena-favoris-x.timer
-systemctl daemon-reload
-systemctl enable --now --quiet xena-favoris-x.timer
-systemctl restart x-newsletter
+bash deploy/xena-installe.sh
 echo "Xena redémarrée sur ${REMOTE:0:7}"
