@@ -57,10 +57,11 @@ a { color: inherit; }
 .flash-btn { margin-left: auto; color: var(--accent); font-size: 20px; }
 .flash-btn.empty { color: var(--muted); opacity: .5; }
 .badge { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.tabs { display: flex; gap: 6px; margin-top: 8px; }
+.tabs { display: flex; gap: 6px; margin-top: 8px; overflow-x: auto; scrollbar-width: none; }
+.tabs::-webkit-scrollbar { display: none; }
 .tab {
   border: 1px solid var(--line); background: transparent; border-radius: 999px;
-  padding: 4px 14px; cursor: pointer; color: var(--muted); font-size: 14px;
+  padding: 4px 12px; cursor: pointer; color: var(--muted); font-size: 14px; white-space: nowrap; flex: none;
 }
 .tab.active { background: var(--text); color: var(--bg); border-color: var(--text); }
 .icon-btn {
